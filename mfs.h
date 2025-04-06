@@ -92,13 +92,15 @@ struct fs_stat
 int fs_stat(const char *path, struct fs_stat *buf);
 
 
-typedef struct VCB{
-	long freeSpaceMap; // where freeSpace is
-	long rootDir; // where rootDir is
-	long signature; // unique signature
-	long totalBlocks; // block size
-	long volumeSize; // blocks in volume
+#pragma pack(push, 1) // Ensure no padding
+typedef struct VCB {
+    uint32_t signature;     // 4-byte signature at start
+    uint64_t volumeSize;    // Total volume size in bytes
+    uint64_t totalBlocks;   // Total number of blocks
+    uint64_t freeSpaceMap;  // Starting block of free space table
+    uint64_t rootDir;       // Starting block of root directory
 } VCB;
+#pragma pack(pop)
 
 #endif
 
