@@ -61,12 +61,13 @@ int initFreeSpace(VCB *vcb, uint64_t numberOfBlocks, uint64_t blockSize) {
     freeSpace[rootDirBlock] = -1;
 
 
+	// Simply put, this is writing the free space map to disk
     if (LBAwrite(freeSpace, tableBlocks, 1) != tableBlocks) {
 		fprintf(stderr, "Error writing free space map to disk\n");
 		free(freeSpace);
 		return -1;
 	}
-
+	
     vcb->freeSpaceMap = 1;          // Free space starts at block 1
     vcb->rootDir = rootDirBlock;    // Root directory starts after free space
 
