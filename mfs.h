@@ -91,5 +91,14 @@ struct fs_stat
 
 int fs_stat(const char *path, struct fs_stat *buf);
 
+
+typedef struct VCB{
+	long freeSpaceMap; // where freeSpace is
+	long rootDir; // where rootDir is
+	long signature; // unique signature
+	long totalBlocks; // block size
+	long volumeSize; // blocks in volume
+} VCB;
+
 #endif
 
