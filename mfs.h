@@ -21,6 +21,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <time.h>
+#include <stdint.h>
 
 #include "b_io.h"
 
@@ -95,11 +96,22 @@ int fs_stat(const char *path, struct fs_stat *buf);
 #pragma pack(push, 1) // Ensure no padding
 typedef struct VCB {
     uint32_t signature;     // 4-byte signature at start
-    uint64_t volumeSize;    // Total volume size in bytes
+    uint64_t blockSize;    // Total volume size in bytes
     uint64_t totalBlocks;   // Total number of blocks
     uint64_t freeSpaceMap;  // Starting block of free space table
     uint64_t rootDir;       // Starting block of root directory
 } VCB;
+#pragma pack(pop)
+
+#pragma pack(push, 1)
+typedef struct DirectoryEntry {
+    char name[32];          // File/directory name
+    uint8_t isFree;         // 1 = free, 0 = used
+    uint8_t isDir;          // 1 = directory, 0 = file
+    uint64_t size;          // Size in bytes
+    uint64_t startBlock;    // Starting block on disk
+    time_t timestamp;       // Last modified time
+} DirectoryEntry;
 #pragma pack(pop)
 
 #endif
