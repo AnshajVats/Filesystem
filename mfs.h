@@ -95,11 +95,11 @@ int fs_stat(const char *path, struct fs_stat *buf);
 
 #pragma pack(push, 1) // Ensure no padding
 typedef struct VCB {
-    uint32_t signature;     // 4-byte signature at start
-    uint64_t blockSize;    // Total volume size in bytes
-    uint64_t totalBlocks;   // Total number of blocks
-    uint64_t freeSpaceMap;  // Starting block of free space table
-    uint64_t rootDir;       // Starting block of root directory
+	uint64_t signature;      // Signature to identify the filesystem
+	uint64_t blockSize;     // Size of each block in bytes
+	uint64_t totalBlocks;   // Total number of blocks on disk
+	uint64_t freeSpaceMap;  // Block number where free space map starts
+	uint64_t rootDir;       // Block number where root directory starts
 } VCB;
 #pragma pack(pop)
 
@@ -110,7 +110,9 @@ typedef struct DirectoryEntry {
     uint8_t isDir;          // 1 = directory, 0 = file
     uint64_t size;          // Size in bytes
     uint64_t startBlock;    // Starting block on disk
-    time_t timestamp;       // Last modified time
+    time_t created;
+    time_t modified;
+    time_t accessed;
 } DirectoryEntry;
 #pragma pack(pop)
 

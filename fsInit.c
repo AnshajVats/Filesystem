@@ -28,61 +28,73 @@
 #define SIGNATURE 0x40453005
 
 
+uint64_t AllocBlocks(int blocksNeeded) {
+    return vcb->rootDir; // Assume vcb is accessible here
+}
 
-// Step 4: initialize the root directory on disk
-int initRootDir(VCB *vcb, uint64_t blockSize) {
-    // Step b: Initial number of directory entries (50)
-    int numEntries = 50;
-    size_t dirEntrySize = sizeof(DirectoryEntry); // Assume 60 bytes
-	printf ("Size of DirectoryEntry: %zu\n", dirEntrySize);
-    size_t totalBytes = numEntries * dirEntrySize; // 3000 bytes
+int writeDir(DirectoryEntry* dir, int blocksNeeded, uint64_t startBlock) {
+    return LBAwrite(dir, blocksNeeded, startBlock) == blocksNeeded ? 0 : -1;
+}
 
-    // Step d: Calculate blocks needed (6 blocks)
-    size_t numBlocks = (totalBytes + blockSize - 1) / blockSize; // 6 blocks
+DirectoryEntry* createDir(int initialEntryCount, DirectoryEntry* parent, uint64_t blockSize) {
+    // Calculate needed blocks
+    size_t dirEntrySize = sizeof(DirectoryEntry);
+    size_t initialBytes = initialEntryCount * dirEntrySize;
+    int blocksNeeded = (initialBytes + blockSize - 1) / blockSize;
+    int actualEntryCount = (blocksNeeded * blockSize) / dirEntrySize;
 
-    // Step e: Allocate memory for 6 blocks
-    DirectoryEntry *dirEntries = malloc(numBlocks * blockSize);
-    if (!dirEntries) {
-        perror("Failed to allocate root directory");
-        return -1;
+    // Allocate memory for directory
+    DirectoryEntry* newDir = malloc(blocksNeeded * blockSize);
+    if (!newDir) {
+        perror("Directory allocation failed");
+        return NULL;
     }
-    memset(dirEntries, 0, numBlocks * blockSize);
+    memset(newDir, 0, blocksNeeded * blockSize);
 
-    // Step e: Initialize all entries to "free"
-    for (int i = 0; i < (numBlocks * blockSize) / dirEntrySize; i++) {
-        dirEntries[i].isFree = 1;
-    }
-
-    // Step f: Get starting block (pre-reserved by initFreeSpace)
-    uint64_t startBlock = vcb->rootDir;
-
-    // Step g: Set "." entry
-    strcpy(dirEntries[0].name, ".");
-    dirEntries[0].isFree = 0;
-    dirEntries[0].isDir = 1;
-    dirEntries[0].size = (numBlocks * blockSize) - (2 * dirEntrySize); // 3060 bytes
-    dirEntries[0].startBlock = startBlock;
-    dirEntries[0].timestamp = time(NULL);
-
-	printf("Root directory size: %zu bytes\n", dirEntries[0].size);
-
-    // Step h: Set ".." entry (same as ".")
-    strcpy(dirEntries[1].name, "..");
-    dirEntries[1].isFree = 0;
-    dirEntries[1].isDir = 1;
-    dirEntries[1].size = dirEntries[0].size;
-    dirEntries[1].startBlock = startBlock;
-    dirEntries[1].timestamp = dirEntries[0].timestamp;
-
-    // Step i: Write root directory to disk
-    if (LBAwrite(dirEntries, numBlocks, startBlock) != numBlocks) {
-        fprintf(stderr, "Failed to write root directory\n");
-        free(dirEntries);
-        return -1;
+    // Initialize all entries as unused
+    for (int i = 2; i < actualEntryCount; i++) {
+        newDir[i].isFree = 1;
+        newDir[i].name[0] = '\0'; // Mark as unused
     }
 
-    free(dirEntries);
-    return 0;
+    // Get blocks from free space system
+    uint64_t startBlock = allocateBlocks(blocksNeeded, 1);
+    if (startBlock == (uint64_t)-1) {
+        free(newDir);
+        return NULL;
+    }
+
+    time_t now = time(NULL);
+    
+    // Create "." entry
+    strcpy(newDir[0].name, ".");
+    newDir[0].isDir = 1;
+    newDir[0].startBlock = startBlock;
+    newDir[0].size = (actualEntryCount - 2) * dirEntrySize; // Exclude . and ..
+    newDir[0].created = now;
+    newDir[0].modified = now;
+
+    // Create ".." entry (special case for root)
+    strcpy(newDir[1].name, "..");
+    newDir[1].isDir = 1;
+    newDir[1].created = now;
+    newDir[1].modified = now;
+
+    if (parent == newDir) { // Root directory case
+        newDir[1].startBlock = startBlock; // Points to self
+        newDir[1].size = newDir[0].size;
+    } else { // Normal directory
+        newDir[1].startBlock = parent[0].startBlock;
+        newDir[1].size = parent[0].size;
+    }
+
+    // Write to disk
+    if (writeDir(newDir, blocksNeeded, startBlock) != 0) {
+        free(newDir);
+        return NULL;
+    }
+
+    return newDir;
 }
 
 int initFreeSpace(VCB *vcb, uint64_t numberOfBlocks, uint64_t blockSize) {
@@ -92,10 +104,13 @@ int initFreeSpace(VCB *vcb, uint64_t numberOfBlocks, uint64_t blockSize) {
 	// This is important because we want to ensure that the free space map is
 	// initialized to zero before we start using it.
     int *freeSpace = calloc(numberOfBlocks, sizeof(int));
+	if (freeSpace == NULL) {
+		perror("Failed to allocate memory for free space map");
+		return -1;
+	}
 	// We set it Block 0 to -1 to indicate that it is not free.
 	// block 0 is reserved for the VCB.
     freeSpace[0] = -1;
-
 	// This will calculate the number of blocks needed for the free space map 
     size_t tableBytes = numberOfBlocks * sizeof(int);
 	// this is a formula discussed in class to calculate the number of blocks needed
@@ -109,24 +124,24 @@ int initFreeSpace(VCB *vcb, uint64_t numberOfBlocks, uint64_t blockSize) {
         freeSpace[i] = -1;
     }
 
-	// I am also reserving some for root directory
-	// It starts right after the free space map
-	size_t rootDirBlock = tableBlocks + 1;
-	printf("Root directory starting at block: %zu\n", rootDirBlock);
-	for (size_t i = 0; i < 6; i++) { // Reserve 6 blocks
-    	freeSpace[rootDirBlock + i] = -1;
-	}
-	vcb->rootDir = rootDirBlock; // Starting block of root directory
+	if (LBAwrite(freeSpace, tableBlocks, 1) != tableBlocks) {
+        fprintf(stderr, "Failed to write free space map\n");
+        free(freeSpace);
+        return -1;
+    }
 
-	// Simply put, this is writing the free space map to disk
-    if (LBAwrite(freeSpace, tableBlocks, 1) != tableBlocks) {
-		fprintf(stderr, "Error writing free space map to disk\n");
-		free(freeSpace);
-		return -1;
-	}
-	
-    vcb->freeSpaceMap = 1;          // Free space starts at block 1
-    vcb->rootDir = rootDirBlock;    // Root directory starts after free space
+    // Allocate root directory blocks USING GLOBAL STATE
+    int rootStart = allocateBlocks(freeSpace, numberOfBlocks, 6, tableBlocks + 1);
+    if (rootStart == -1) {
+        fprintf(stderr, "Root directory allocation failed\n");
+        free(freeSpace);
+        return -1;
+    }
+
+    // Update VCB
+    vcb->freeSpaceMap = 1;
+    vcb->rootDir = rootStart;
+       // Free space starts at block 1
 
     free(freeSpace);
     return 0;
@@ -157,11 +172,12 @@ int initFileSystem(uint64_t numberOfBlocks, uint64_t blockSize) {
         // Initialize free space and root directory
         initFreeSpace(vcb, numberOfBlocks, blockSize);
 
-		if (initRootDir(vcb, blockSize) != 0) {
-            fprintf(stderr, "Failed to initialize root directory\n");
-            free(vcb);
+        DirectoryEntry* root = createDir(50, NULL, blockSize);
+        if (!root) {
+            fprintf(stderr, "Root directory creation failed\n");
             return -1;
         }
+        vcb->rootDir = root[0].startBlock;
 
         // Write VCB to disk
         if (LBAwrite(vcb, 1, 0) != 1) {
