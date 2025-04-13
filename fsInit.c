@@ -27,23 +27,24 @@
 
 #define SIGNATURE 0x40453005
 #define EOC -2
+#define INVALID_BLOCK ((uint64_t)-1)
 
 static int* freeSpace = NULL; 
 static VCB* vcb = NULL;
 
 uint64_t allocateBlocks(int blocksNeeded) {
-    uint64_t startBlock = (uint64_t)-1;  // Using -1 consistently as not found
-    uint64_t prevBlock = (uint64_t)-1;
+    uint64_t startBlock = INVALID_BLOCK;  // Using -1 consistently as not found
+    uint64_t prevBlock = INVALID_BLOCK;
     int allocated = 0;
     
     // First-fit allocation
     printf("Allocating %d blocks...\n", blocksNeeded);
     printf("FAT Chain: ");
     
-    for(uint64_t i = 0; i < vcb->totalBlocks && allocated < blocksNeeded; i++){
+    for(uint64_t i = 1; i < vcb->totalBlocks && allocated < blocksNeeded; i++){
         if(freeSpace[i] == 0){ // Free block
-            if(startBlock == (uint64_t)-1) startBlock = i;
-            if(prevBlock != (uint64_t)-1) freeSpace[prevBlock] = i;
+            if(startBlock == INVALID_BLOCK) startBlock = i;
+            if(prevBlock != INVALID_BLOCK) freeSpace[prevBlock] = i;
             freeSpace[i] = EOC; // Tentatively mark as allocated
             printf("%lu -> ", i);
             prevBlock = i;
@@ -59,80 +60,20 @@ uint64_t allocateBlocks(int blocksNeeded) {
     }
     
     // Rollback on failure
-    if(startBlock != (uint64_t)-1){
+    if(startBlock != INVALID_BLOCK){
         uint64_t current = startBlock;
-        while(current != (uint64_t)-1 && freeSpace[current] != 0){
+        while(current != INVALID_BLOCK && freeSpace[current] != 0){
             uint64_t next = freeSpace[current];
             freeSpace[current] = 0;
-            current = (next == EOC) ? (uint64_t)-1 : next;
+            current = (next == EOC) ? INVALID_BLOCK : next;
         }
     }
     
-    return (uint64_t)-1;
+    return INVALID_BLOCK;
 }
 int writeDir(DirectoryEntry* dir, int blocksNeeded, uint64_t startBlock) {
     return LBAwrite(dir, blocksNeeded, startBlock) == blocksNeeded ? 0 : -1;
 }
-
-// DirectoryEntry* createDir(int initialEntryCount, DirectoryEntry* parent, uint64_t blockSize) {
-//     // Calculate needed blocks
-//     size_t dirEntrySize = sizeof(DirectoryEntry);
-//     size_t initialBytes = initialEntryCount * dirEntrySize;
-//     int blocksNeeded = (initialBytes + blockSize - 1) / blockSize;
-//     int actualEntryCount = (blocksNeeded * blockSize) / dirEntrySize;
-
-//     // Allocate memory for directory
-//     DirectoryEntry* newDir = malloc(blocksNeeded * blockSize);
-//     if (!newDir) {
-//         perror("Directory allocation failed");
-//         return NULL;
-//     }
-//     memset(newDir, 0, blocksNeeded * blockSize);
-
-//     // Initialize all entries as unused
-//     for (int i = 2; i < actualEntryCount; i++) {
-//         newDir[i].isFree = 1;
-//     }
-
-//     // Get blocks from free space system
-//     uint64_t startBlock = allocateBlocks(blocksNeeded, 1);
-//     if (startBlock == (uint64_t)-1) {
-//         free(newDir);
-//         return NULL;
-//     }
-
-//     time_t now = time(NULL);
-    
-//     // Create "." entry
-//     strcpy(newDir[0].name, ".");
-//     newDir[0].isDir = 1;
-//     newDir[0].startBlock = startBlock;
-//     newDir[0].size = (actualEntryCount - 2) * dirEntrySize; // Exclude . and ..
-//     newDir[0].created = now;
-//     newDir[0].modified = now;
-
-//     // Create ".." entry (special case for root)
-//     strcpy(newDir[1].name, "..");
-//     newDir[1].isDir = 1;
-//     newDir[1].created = now;
-//     newDir[1].modified = now;
-
-//     if (parent == newDir) { // Root directory case
-//         newDir[1].startBlock = startBlock; // Points to self
-//         newDir[1].size = newDir[0].size;
-//     } else { // Normal directory
-//         newDir[1].startBlock = parent[0].startBlock;
-//         newDir[1].size = parent[0].size;
-//     }
-
-//     // Write to disk
-//     if (writeDir(newDir, blocksNeeded, startBlock) != 0) {
-//         free(newDir);
-//         return NULL;
-//     }
-
-//     return newDir;
-// }
 
 DirectoryEntry* createDir(int entryCount, DirectoryEntry* parent) {
     // Calculate needed blocks
@@ -141,7 +82,13 @@ DirectoryEntry* createDir(int entryCount, DirectoryEntry* parent) {
     
     // Allocate blocks
     uint64_t startBlock = allocateBlocks(blocksNeeded);
-    if(startBlock == (uint64_t)-1) return NULL;
+    if(startBlock == INVALID_BLOCK) return NULL;
+
+	size_t fatBlocks = (vcb->totalBlocks * sizeof(int) + vcb->blockSize - 1) / vcb->blockSize;
+	if (LBAwrite(freeSpace, fatBlocks, 1) != fatBlocks) {
+    	printf("Failed to write FAT!\n");
+    	exit(1);
+	}
     
     // Initialize directory
     DirectoryEntry* dir = malloc(blocksNeeded * vcb->blockSize);
@@ -163,9 +110,9 @@ DirectoryEntry* createDir(int entryCount, DirectoryEntry* parent) {
     
     // Write to disk following chain
     uint64_t currentBlock = startBlock;
-    for(int i=0; i<blocksNeeded && currentBlock != (uint64_t)-1; i++){
+    for(int i=0; i<blocksNeeded && currentBlock != INVALID_BLOCK; i++){
         LBAwrite((char*)dir + i*vcb->blockSize, 1, currentBlock);
-        currentBlock = (freeSpace[currentBlock] == EOC) ? (uint64_t)-1 : freeSpace[currentBlock];
+        currentBlock = (freeSpace[currentBlock] == EOC) ? -1 : freeSpace[currentBlock];
     }
     
     printf("Root Directory Blocks: %lu (size: %lu bytes)\n", startBlock, dir[0].size);
@@ -198,7 +145,7 @@ int initFreeSpace(VCB *vcb, uint64_t numberOfBlocks, uint64_t blockSize) {
     size_t tableBlocks = (tableBytes + blockSize - 1) / blockSize;
 
 	// This actually sets the number of blocks to be -1
-	printf("FAT Reserved Blocks (0-%zu):\n", tableBlocks);
+	printf(" Reserved Blocks (0-%zu):\n", tableBlocks);
     for (size_t i = 1; i <= tableBlocks; i++) {
         freeSpace[i] = -1;
 		printf("Block %zu: %d\n", i, freeSpace[i]);

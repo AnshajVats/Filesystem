@@ -106,7 +106,6 @@ typedef struct VCB {
 #pragma pack(push, 1)
 typedef struct DirectoryEntry {
     char name[32];          // File/directory name
-    uint8_t isFree;         // 1 = free, 0 = used
     uint8_t isDir;          // 1 = directory, 0 = file
     uint64_t size;          // Size in bytes
     uint64_t startBlock;    // Starting block on disk
