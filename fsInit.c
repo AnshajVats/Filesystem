@@ -71,8 +71,46 @@ uint64_t allocateBlocks(int blocksNeeded) {
     
     return INVALID_BLOCK;
 }
-int writeDir(DirectoryEntry* dir, int blocksNeeded, uint64_t startBlock) {
-    return LBAwrite(dir, blocksNeeded, startBlock) == blocksNeeded ? 0 : -1;
+int writeDir(uint64_t startBlock, int blocksNeeded, DirectoryEntry* dir) {
+    uint64_t currentBlock = startBlock;
+    
+    // 1. Write directory data to blocks
+    for (int i = 0; i < blocksNeeded && currentBlock != INVALID_BLOCK; i++) {
+        if (LBAwrite((char*)dir + i * vcb->blockSize, 1, currentBlock) != 1) {
+            return -1; // Failed to write directory data
+        }
+        currentBlock = freeSpace[currentBlock] == EOC ? INVALID_BLOCK : freeSpace[currentBlock];
+    }
+
+    currentBlock = startBlock;
+
+    // 3. Update FAT entries for each block in the chain
+    for (int i = 0; i < blocksNeeded && currentBlock != INVALID_BLOCK; i++) {
+        // Calculate which FAT block contains this entry
+        uint64_t fatBlock = 1 + (currentBlock / 128); // 128 entries per FAT block
+        int fatEntryIndex = currentBlock % 128;
+
+        // Read the FAT block
+        int* fatBlockBuffer = malloc(vcb->blockSize);
+        if (LBAread(fatBlockBuffer, 1, fatBlock) != 1) {
+            free(fatBlockBuffer);
+            return -1; // Failed to read FAT block
+        }
+
+        // Update the specific entry
+        fatBlockBuffer[fatEntryIndex] = freeSpace[currentBlock];
+
+        // Write back the FAT block
+        if (LBAwrite(fatBlockBuffer, 1, fatBlock) != 1) {
+            free(fatBlockBuffer);
+            return -1; // Failed to write FAT block
+        }
+
+        free(fatBlockBuffer);
+        currentBlock = freeSpace[currentBlock] == EOC ? INVALID_BLOCK : freeSpace[currentBlock];
+    }
+
+    return 0;
 }
 
 DirectoryEntry* createDir(int entryCount, DirectoryEntry* parent) {
@@ -83,12 +121,6 @@ DirectoryEntry* createDir(int entryCount, DirectoryEntry* parent) {
     // Allocate blocks
     uint64_t startBlock = allocateBlocks(blocksNeeded);
     if(startBlock == INVALID_BLOCK) return NULL;
-
-	size_t fatBlocks = (vcb->totalBlocks * sizeof(int) + vcb->blockSize - 1) / vcb->blockSize;
-	if (LBAwrite(freeSpace, fatBlocks, 1) != fatBlocks) {
-    	printf("Failed to write FAT!\n");
-    	exit(1);
-	}
     
     // Initialize directory
     DirectoryEntry* dir = malloc(blocksNeeded * vcb->blockSize);
@@ -109,11 +141,7 @@ DirectoryEntry* createDir(int entryCount, DirectoryEntry* parent) {
     dir[1].created = dir[1].modified = now;
     
     // Write to disk following chain
-    uint64_t currentBlock = startBlock;
-    for(int i=0; i<blocksNeeded && currentBlock != INVALID_BLOCK; i++){
-        LBAwrite((char*)dir + i*vcb->blockSize, 1, currentBlock);
-        currentBlock = (freeSpace[currentBlock] == EOC) ? -1 : freeSpace[currentBlock];
-    }
+	writeDir(startBlock, blocksNeeded, dir) != 0;
     
     printf("Root Directory Blocks: %lu (size: %lu bytes)\n", startBlock, dir[0].size);
     printf("Dot Entry: . (Block %lu)\n", dir[0].startBlock);
@@ -196,13 +224,6 @@ int initFileSystem(uint64_t numberOfBlocks, uint64_t blockSize) {
 		printf("VCB Block Size: %lu\n", vcb->blockSize);
 		printf("VCB Total Blocks: %lu\n", vcb->totalBlocks);
 		printf("Root Directory Start Block: %lu\n", vcb->rootDir);
-
-        // Write VCB to disk
-        if (LBAwrite(vcb, 1, 0) != 1) {
-       		fprintf(stderr, "Error writing VCB to disk\n");
-        	free(vcb);
-        	exit(1);
-    	}
     }
     return 0;
 }
