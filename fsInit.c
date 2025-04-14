@@ -31,7 +31,7 @@
 #define INVALID_BLOCK ((uint64_t)-1)  // Used when no valid block can be found
 
 static int *freeSpace = NULL;  // This points to our in-memory free space bitmap or FAT
-static VCB *vcb = NULL;        // This points to the volume control block (VCB) structure
+ VCB *vcb = NULL;        // This points to the volume control block (VCB) structure
 
 // We use this function to allocate a specified number of blocks.
 // It links them together in a FAT-like chain and returns the starting block.
