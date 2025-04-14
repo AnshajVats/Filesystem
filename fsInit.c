@@ -15,7 +15,6 @@
 **************************************************************/
 
 
-
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/types.h>
@@ -27,16 +26,16 @@
 #include "fsLow.h"
 #include "mfs.h"
 
-#define SIGNATURE 0x40453005
-#define EOC -2
-#define INVALID_BLOCK ((uint64_t)-1)
+#define SIGNATURE 0x40453005  // We use this as a magic number to validate the filesystem
+#define EOC -2                // Represents the end of a FAT chain
+#define INVALID_BLOCK ((uint64_t)-1)  // Used when no valid block can be found
 
-static int *freeSpace = NULL;
-static VCB *vcb = NULL;
+static int *freeSpace = NULL;  // This points to our in-memory free space bitmap or FAT
+static VCB *vcb = NULL;        // This points to the volume control block (VCB) structure
 
-// I used this function to allocate a sequence of free blocks using a simple first-fit strategy.
-// It walks through the free space map and connects blocks like a linked list in FAT.
-// If enough blocks aren't found, I roll back and undo the allocation.
+// We use this function to allocate a specified number of blocks.
+// It links them together in a FAT-like chain and returns the starting block.
+// If not enough space is found, we roll back the allocation.
 uint64_t allocateBlocks(int blocksNeeded) {
     uint64_t first = INVALID_BLOCK;
     uint64_t last = INVALID_BLOCK;
@@ -46,15 +45,15 @@ uint64_t allocateBlocks(int blocksNeeded) {
     printf("FAT Chain: ");
     fflush(stdout);
 
-    // Here I loop until I find all the blocks I need or run out of space.
+    // We go through the entire free space array to find unused blocks.
     for (uint64_t i = 1; i < vcb->totalBlocks && count < blocksNeeded; i++) {
         if (freeSpace[i] == 0) {
             if (first == INVALID_BLOCK)
-                first = i;
+                first = i;  // This becomes the start of our chain
             else
-                freeSpace[last] = i;
+                freeSpace[last] = i;  // We link previous block to the current
 
-            freeSpace[i] = EOC;
+            freeSpace[i] = EOC;  // We tentatively mark this as the end of chain
             printf("%lu%s", i, (count == blocksNeeded-1) ? "" : " -> ");
             last = i;
             count++;
@@ -63,11 +62,11 @@ uint64_t allocateBlocks(int blocksNeeded) {
 
     printf("END\n");
 
-    // If allocation worked, return the start of the chain
+    // If we managed to allocate all blocks, return the start block
     if (count == blocksNeeded)
         return first;
 
-    // If allocation failed, I undo all the changes I made above.
+    // Otherwise, we clean up what we allocated so far (rollback)
     uint64_t cur = first;
     while (cur != INVALID_BLOCK && freeSpace[cur] != 0) {
         uint64_t next = freeSpace[cur];
@@ -78,12 +77,12 @@ uint64_t allocateBlocks(int blocksNeeded) {
     return INVALID_BLOCK;
 }
 
-// This function writes the directory entries to disk following the FAT-style chain.
-// I also make sure to update the FAT blocks themselves with proper chaining info.
+// This function writes directory entries to disk, one block at a time.
+// It uses the FAT chain to traverse and write blocks, and then updates the FAT itself.
 int writeDir(uint64_t start, int numBlocks, DirectoryEntry *entries) {
     uint64_t curr = start;
 
-    // First, I write the actual contents of the directory to the disk.
+    // First we write the directory content to disk block by block
     for (int i = 0; i < numBlocks && curr != INVALID_BLOCK; i++) {
         if (LBAwrite((char *)entries + (i * vcb->blockSize), 1, curr) != 1)
             return -1;
@@ -92,23 +91,23 @@ int writeDir(uint64_t start, int numBlocks, DirectoryEntry *entries) {
 
     curr = start;
 
-    // Now I go back and update the FAT entries that link the blocks together.
+    // Now we update the actual FAT entries that describe the block chain
     for (int i = 0; i < numBlocks && curr != INVALID_BLOCK; i++) {
-        uint64_t fatBlock = 1 + (curr / 128);
-        int index = curr % 128;
+        uint64_t fatBlock = 1 + (curr / 128);  // Figure out which FAT block to write to
+        int index = curr % 128;               // Find the index inside that FAT block
 
         int *buf = malloc(vcb->blockSize);
         if (!buf)
             return -1;
 
-        if (LBAread(buf, 1, fatBlock) != 1) {
+        if (LBAread(buf, 1, fatBlock) != 1) {  // Read existing FAT block
             free(buf);
             return -1;
         }
 
-        buf[index] = freeSpace[curr];  // Writing chain info into FAT
+        buf[index] = freeSpace[curr];  // Update the FAT entry with the next block in chain
 
-        if (LBAwrite(buf, 1, fatBlock) != 1) {
+        if (LBAwrite(buf, 1, fatBlock) != 1) {  // Write updated FAT block back to disk
             free(buf);
             return -1;
         }
@@ -120,13 +119,13 @@ int writeDir(uint64_t start, int numBlocks, DirectoryEntry *entries) {
     return 0;
 }
 
-// This function creates a directory with 50 entries and inserts "." and ".." entries.
-// I initialize timestamps and set up links to parent blocks to see real directory behavior.
+// This function creates a directory and populates it with . and .. entries.
+// It allocates enough space for the directory and writes it to disk.
 DirectoryEntry *createDir(int entryCount, DirectoryEntry *parent) {
     size_t totalBytes = entryCount * sizeof(DirectoryEntry);
     int blockCount = (totalBytes + vcb->blockSize - 1) / vcb->blockSize;
 
-    // I request blocks first and check if they’re available
+    // We get a chain of blocks for our directory
     uint64_t firstBlock = allocateBlocks(blockCount);
     if (firstBlock == INVALID_BLOCK)
         return NULL;
@@ -138,14 +137,14 @@ DirectoryEntry *createDir(int entryCount, DirectoryEntry *parent) {
     memset(dir, 0, blockCount * vcb->blockSize);
     time_t t = time(NULL);
 
-    // "." points to the directory itself
+    // The "." entry always points to the current directory
     strcpy(dir[0].name, ".");
     dir[0].isDir = 1;
     dir[0].startBlock = firstBlock;
     dir[0].size = totalBytes;
     dir[0].created = dir[0].modified = t;
 
-    // ".." points to parent if it exists, or itself if it’s the root
+    // The ".." entry points to parent or to self if this is the root
     strcpy(dir[1].name, "..");
     dir[1].isDir = 1;
     dir[1].startBlock = parent ? parent->startBlock : firstBlock;
@@ -156,7 +155,6 @@ DirectoryEntry *createDir(int entryCount, DirectoryEntry *parent) {
         return NULL;
     }
 
-    // Just added some logging for myself to confirm where root got placed
     printf("Root Directory Blocks: %lu (size: %lu bytes)\n", firstBlock, dir[0].size);
     printf("Dot Entry: . (Block %lu)\n", dir[0].startBlock);
     printf("DotDot Entry: .. (Block %lu)\n", dir[1].startBlock);
@@ -164,20 +162,19 @@ DirectoryEntry *createDir(int entryCount, DirectoryEntry *parent) {
     return dir;
 }
 
-// This function initializes the free space map and marks reserved blocks (like VCB and FAT).
-// I calculate how many blocks the FAT needs based on total number of entries.
+// This sets up the free space structure, which tracks block usage using a FAT-style table.
+// We also mark system-reserved blocks (like the VCB and FAT itself).
 int initFreeSpace(VCB *vcb, uint64_t totalBlocks, uint64_t blockSize) {
     freeSpace = calloc(totalBlocks, sizeof(int));
     if (!freeSpace)
         return -1;
 
-    // Block 0 is for the VCB, so I mark it as used right away
-    freeSpace[0] = -1;
+    freeSpace[0] = -1;  // Block 0 is reserved for the VCB
 
     size_t fatBytes = totalBlocks * sizeof(int);
-    size_t fatBlocks = (fatBytes + blockSize - 1) / blockSize;
+    size_t fatBlocks = (fatBytes + blockSize - 1) / blockSize;  // How many blocks FAT takes
 
-    // These are all blocks that will store the free space table itself
+    // Mark the FAT blocks as used so they aren't reused later
     printf(" Reserved Blocks (0-%zu):\n", fatBlocks);
     for (size_t i = 1; i <= fatBlocks; i++) {
         freeSpace[i] = -1;
@@ -185,43 +182,42 @@ int initFreeSpace(VCB *vcb, uint64_t totalBlocks, uint64_t blockSize) {
     }
     printf("... (remaining blocks omitted)\n");
 
-    // I write the initialized free space table to disk so it can persist
     if (LBAwrite(freeSpace, fatBlocks, 1) != fatBlocks) {
         free(freeSpace);
         return -1;
     }
 
-    vcb->freeSpaceMap = 1;
+    vcb->freeSpaceMap = 1;  // This tells us where the FAT begins
     return 0;
 }
 
-// This is the entry point that sets up the whole file system (VCB, free map, root dir).
-// If VCB already exists (and has a signature), I assume disk is initialized and skip setup.
+// This is the main initialization routine that prepares the file system on first use.
+// If a valid signature is already present, we skip reinitialization.
 int initFileSystem(uint64_t totalBlocks, uint64_t blockSize) {
     vcb = malloc(blockSize);
     if (!vcb)
         return -1;
 
-    // I check if something is already written to the disk (block 0)
+    // We check if the VCB already exists on disk
     if (LBAread(vcb, 1, 0) != 1) {
         free(vcb);
         return -1;
     }
 
-    // If signature is missing, I reformat and start fresh
     if (vcb->signature != SIGNATURE) {
+        // If not, we assume this is a new disk and set everything up from scratch
         memset(vcb, 0, blockSize);
         vcb->signature = SIGNATURE;
         vcb->blockSize = blockSize;
         vcb->totalBlocks = totalBlocks;
 
-        // Free space map setup
+        // Initialize free space tracking
         if (initFreeSpace(vcb, totalBlocks, blockSize) != 0) {
             free(vcb);
             return -1;
         }
 
-        // Creating the actual root directory (with 50 slots)
+        // Create and write the root directory
         DirectoryEntry *root = createDir(50, NULL);
         if (!root) {
             free(vcb);
@@ -230,7 +226,7 @@ int initFileSystem(uint64_t totalBlocks, uint64_t blockSize) {
 
         vcb->rootDir = root[0].startBlock;
 
-        // Logging so I can track block sizes and addresses
+        // Log some useful values for verification
         printf("VCB Signature: 0x%lx\n", vcb->signature);
         printf("VCB Block Size: %lu\n", vcb->blockSize);
         printf("VCB Total Blocks: %lu\n", vcb->totalBlocks);
@@ -240,7 +236,7 @@ int initFileSystem(uint64_t totalBlocks, uint64_t blockSize) {
     return 0;
 }
 
-// I always free everything I malloced so there are no memory leaks.
+// Cleanup function to release allocated memory on exit.
 void exitFileSystem() {
     if (freeSpace)
         free(freeSpace);
