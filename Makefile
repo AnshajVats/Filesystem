@@ -43,7 +43,7 @@ CFLAGS= -g -I.
 LIBS =pthread
 DEPS = 
 # Add any additional objects to this list
-ADDOBJ= fsInit.o mfs.o
+ADDOBJ= fsInit.o mfs.o path.o
 
 ARCH = $(shell uname -m)
 
