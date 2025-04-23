@@ -1,6 +1,6 @@
 /**************************************************************
 * Class::  CSC-415-02 Spring 2024
-* Name::
+* Name:: Wilmaire & Karina Alvarado Mendoza
 * Student IDs::
 * GitHub-Name:: Karina-Krystal
 * Group-Name:: Horse
