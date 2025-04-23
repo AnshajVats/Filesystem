@@ -11,7 +11,7 @@
 * Description:: 
 *
 **************************************************************/
-
+#include <b_io.c>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -52,9 +52,33 @@ int FindInDirectory(DirectoryEntry *de, const char * name){
     return -1;
 }
 
-// funtion needs to be implemented
-DirectoryEntry * LoadDirectory(){
-    return NULL;
+// accepting one directory entry/some index in array
+DirectoryEntry * LoadDirectory(DirectoryEntry * cwd ){
+    if (cwd == NULL || !cwd->isDir) {
+        return NULL;
+    }
+    //from what we accept, we extract the block number for that Directory on disk
+    //cwd->startBlock;
+
+    
+    //int lbaCount = cwd->size/B_CHUNK_SIZE; 
+    int lbaCount = (cwd->size + B_CHUNK_SIZE - 1) / B_CHUNK_SIZE;
+   // Space is allocated for the directory block
+    DirectoryEntry *dir = malloc(cwd->size);
+    if (!dir) {
+        perror("Failed to allocate memory for directory block");
+        return NULL;
+    }
+   
+    //LBAread (dir, lbaCount, cwd->startBlock);
+    // That block is loaded from the disk 
+    if (LBAread(dir, lbaCount, cwd->startBlock) != lbaCount) {
+        perror("Failed to read the directory block from disk");
+        free(dir);
+        return NULL;
+    }
+    //from that we get DEarray and we return that directory entry array
+    return dir;
 }
 
 // needed for most functions
