@@ -6,7 +6,7 @@
 * Group-Name:: Horse
 * Project:: Basic File System
 *
-* File:: path.c
+* File:: path.h
 *
 * Description:: 
 *

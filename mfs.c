@@ -1,3 +1,17 @@
+/**************************************************************
+* Class::  CSC-415-02 Spring 2024
+* Name::
+* Student IDs::
+* GitHub-Name:: Karina-Krystal
+* Group-Name:: Horse
+* Project:: Basic File System
+*
+* File:: mfs.c
+*
+* Description:: 
+*
+**************************************************************/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

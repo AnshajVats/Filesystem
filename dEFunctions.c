@@ -1,5 +1,5 @@
 /**************************************************************
-* Class::  CSC-415-01 Spring 2025
+* Class::  CSC-415-02 Spring 2025
 * Name:: Karina Alvarado Mendoza
 * Student IDs:: 921299233
 * GitHub-Name:: Karina-Krystal

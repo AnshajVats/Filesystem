@@ -6,11 +6,12 @@
 * Group-Name:: Horse
 * Project:: Basic File System
 *
-* File:: mfs.c
+* File:: path.c
 *
 * Description:: 
 *
 **************************************************************/
+
 #include <b_io.c>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,26 +23,30 @@
 #include "mfs.h"
 #include "fsLow.h"
 
-DirectoryEntry * alrLoadedRoot = NULL; // is a global
-DirectoryEntry * alrLoadedcwd = NULL;     // is a global
+// global pointers
+DirectoryEntry * alrLoadedRoot = NULL; // pointer for root
+DirectoryEntry * alrLoadedcwd = NULL;  // pointer for current working directory
 
+// helper function
 // checking if given directory entry is a directory
-int isDirEaDir(DirectoryEntry *de){
+int isDEaDir(DirectoryEntry *de){
     if(de == NULL){
         return 0;
     }
     return de->isDir;
 }
 
-// function needs to be implemented
-int FindInDirectory(DirectoryEntry *de, const char * name){
-    if(!isDirEaDir(de)){
+// helper function
+// finds given directory
+int FindInDirectory(DirectoryEntry *entry, const char * name){
+    if(!isDEaDir(entry)){
         return -1;
     }
 
-    DirectoryEntry * entry = (DirectoryEntry *)de->name;
-
+    // iterates through entries to find match
     for (int i = 0; i < 32; i++) {
+        
+        // checking if dir is valid
         if (entry[i].name[0] == '\0') {
             break;
         }
@@ -137,7 +142,7 @@ int parsepath(char * pathname, parsepathInfo * ppI) {
             if(index == -1){
                 return -2;
             }
-            if(!isDirEaDir(&(parent[index]))){
+            if(!isDEaDir(&(parent[index]))){
                 return -1;
             }
             DirectoryEntry * tempParent = LoadDirectory(&(parent[index]));
