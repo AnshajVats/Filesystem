@@ -24,8 +24,6 @@
 #define B_CHUNK_SIZE 512 // block size in bytes
 
 // global pointers
-DirectoryEntry *alrLoadedRoot = NULL; // pointer for root
-DirectoryEntry *alrLoadedcwd = NULL;  // pointer for current working directory
 
 
 // helper function
@@ -59,34 +57,26 @@ int FindInDirectory(DirectoryEntry *entry, const char * name){
 }
 
 // accepting one directory entry/some index in array
-DirectoryEntry * LoadDirectory(DirectoryEntry * cwd ){
-    if (cwd == NULL || !cwd->isDir) {
-        return NULL;
+// path.c
+DirectoryEntry *LoadDirectory(DirectoryEntry *cwd) {
+    if (!cwd || !isDEaDir(cwd) || cwd->size <= 0) {
+        return NULL; // Validate size
     }
-    //from what we accept, we extract the block number for that Directory on disk
-    //cwd->startBlock;
 
-    
-    //int lbaCount = cwd->size/B_CHUNK_SIZE; 
+    // Calculate block count using directory size and block size
     int lbaCount = (cwd->size + B_CHUNK_SIZE - 1) / B_CHUNK_SIZE;
-   // Space is allocated for the directory block
-    DirectoryEntry *dir = malloc(cwd->size);
-    if (!dir) {
-        perror("Failed to allocate memory for directory block");
-        return NULL;
-    }
-   
-    //LBAread (dir, lbaCount, cwd->startBlock);
-    // That block is loaded from the disk 
+
+    // Allocate block-aligned memory
+    DirectoryEntry *dir = malloc(lbaCount * B_CHUNK_SIZE); // <-- Fixed
+    if (!dir) return NULL;
+
+    // Load directory blocks from disk
     if (LBAread(dir, lbaCount, cwd->startBlock) != lbaCount) {
-        perror("Failed to read the directory block from disk");
         free(dir);
         return NULL;
     }
-    //from that we get DEarray and we return that directory entry array
     return dir;
 }
-
 // needed for most functions
 int parsepath(char * pathname, parsepathInfo * ppI) {
 

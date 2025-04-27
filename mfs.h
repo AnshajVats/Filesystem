@@ -26,9 +26,9 @@
 #include "b_io.h"
 
 #include <dirent.h>
-#define FT_REGFILE	DT_REG
-#define FT_DIRECTORY DT_DIR
-#define FT_LINK	DT_LNK
+#define FT_REGFILE   1 
+#define FT_DIRECTORY 2 
+#define FT_LINK      3 
 
 #ifndef uint64_t
 typedef u_int64_t uint64_t;
@@ -36,6 +36,29 @@ typedef u_int64_t uint64_t;
 #ifndef uint32_t
 typedef u_int32_t uint32_t;
 #endif
+
+
+#pragma pack(push, 1) // Ensure no padding
+typedef struct VCB {
+	uint64_t signature;      // Signature to identify the filesystem
+	uint64_t blockSize;     // Size of each block in bytes
+	uint64_t totalBlocks;   // Total number of blocks on disk
+	uint64_t freeSpaceMap;  // Block number where free space map starts
+	uint64_t rootDir;       // Block number where root directory starts
+} VCB;
+#pragma pack(pop)
+
+#pragma pack(push, 1)
+typedef struct DirectoryEntry {
+    char name[32];          // File/directory name
+    uint8_t isDir;          // 1 = directory, 0 = file
+    uint64_t size;          // Size in bytes
+    uint64_t startBlock;    // Starting block on disk
+    time_t created;
+    time_t modified;
+    time_t accessed;
+} DirectoryEntry;
+#pragma pack(pop)
 
 // This structure is returned by fs_readdir to provide the caller with information
 // about each file as it iterates through a directory
@@ -51,14 +74,13 @@ struct fs_diriteminfo
 // from a directory.  This structure helps you (the file system) keep track of
 // which directory entry you are currently processing so that everytime the caller
 // calls the function readdir, you give the next entry in the directory
-typedef struct
-	{
-	/*****TO DO:  Fill in this structure with what your open/read directory needs  *****/
+typedef struct {
 	unsigned short  d_reclen;		/* length of this record */
-	unsigned short	dirEntryPosition;	/* which directory entry position, like file pos */
-	//DE *	directory;			/* Pointer to the loaded directory you want to iterate */
-	struct fs_diriteminfo * di;		/* Pointer to the structure you return from read */
-	} fdDir;
+	unsigned short	dirEntryPosition;
+    DirectoryEntry *dirEntries;  // Pointer to loaded directory
+    int currentEntry;           // Current position for readdir
+} fdDir;
+
 
 // Key directory functions
 int fs_mkdir(const char *pathname, mode_t mode);
@@ -93,27 +115,9 @@ struct fs_stat
 int fs_stat(const char *path, struct fs_stat *buf);
 
 
-#pragma pack(push, 1) // Ensure no padding
-typedef struct VCB {
-	uint64_t signature;      // Signature to identify the filesystem
-	uint64_t blockSize;     // Size of each block in bytes
-	uint64_t totalBlocks;   // Total number of blocks on disk
-	uint64_t freeSpaceMap;  // Block number where free space map starts
-	uint64_t rootDir;       // Block number where root directory starts
-} VCB;
-#pragma pack(pop)
 
-#pragma pack(push, 1)
-typedef struct DirectoryEntry {
-    char name[32];          // File/directory name
-    uint8_t isDir;          // 1 = directory, 0 = file
-    uint64_t size;          // Size in bytes
-    uint64_t startBlock;    // Starting block on disk
-    time_t created;
-    time_t modified;
-    time_t accessed;
-} DirectoryEntry;
-#pragma pack(pop)
+
+
 
 #endif
 

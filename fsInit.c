@@ -25,6 +25,10 @@
 
 #include "fsLow.h"
 #include "mfs.h"
+#include "fsInit.h"
+
+
+
 
 #define SIGNATURE 0x40453005  // We use this as a magic number to validate the filesystem
 #define EOC -2                // Represents the end of a FAT chain
@@ -32,6 +36,8 @@
 
 static int *freeSpace = NULL;  // This points to our in-memory free space bitmap or FAT
  VCB *vcb = NULL;        // This points to the volume control block (VCB) structure
+DirectoryEntry *alrLoadedRoot = NULL;
+DirectoryEntry *alrLoadedcwd = NULL;
 
 // We use this function to allocate a specified number of blocks.
 // It links them together in a FAT-like chain and returns the starting block.
@@ -141,7 +147,7 @@ DirectoryEntry *createDir(int entryCount, DirectoryEntry *parent) {
     strcpy(dir[0].name, ".");
     dir[0].isDir = 1;
     dir[0].startBlock = firstBlock;
-    dir[0].size = totalBytes;
+    dir[0].size = blockCount * vcb->blockSize;
     dir[0].created = dir[0].modified = t;
 
     // The ".." entry points to parent or to self if this is the root
@@ -155,7 +161,9 @@ DirectoryEntry *createDir(int entryCount, DirectoryEntry *parent) {
         return NULL;
     }
 
-    printf("Root Directory Blocks: %lu (size: %lu bytes)\n", firstBlock, dir[0].size);
+    printf("[createDir] Created directory '%s' at block %lu (parent: %lu)\n", 
+       dir[0].name, firstBlock, parent ? parent->startBlock : 0);
+
     printf("Dot Entry: . (Block %lu)\n", dir[0].startBlock);
     printf("DotDot Entry: .. (Block %lu)\n", dir[1].startBlock);
 
@@ -225,6 +233,8 @@ int initFileSystem(uint64_t totalBlocks, uint64_t blockSize) {
         }
 
         vcb->rootDir = root[0].startBlock;
+        alrLoadedRoot = root; // Assign root directory to global pointer
+        alrLoadedcwd = root;
 
         // Log some useful values for verification
         printf("VCB Signature: 0x%lx\n", vcb->signature);
@@ -242,5 +252,7 @@ void exitFileSystem() {
         free(freeSpace);
     if (vcb)
         free(vcb);
+    if (alrLoadedRoot) free(alrLoadedRoot); // Add
+    if (alrLoadedcwd) free(alrLoadedcwd);   // Add
     printf("System exiting\n");
 }

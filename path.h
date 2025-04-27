@@ -36,5 +36,6 @@ typedef struct parsepathInfo{
 
 int parsepath(char * pathname, parsepathInfo * ppI);
 int isDEaDir(DirectoryEntry *de);
+DirectoryEntry *LoadDirectory(DirectoryEntry *cwd);
 
 #endif
