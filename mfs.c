@@ -20,6 +20,8 @@
 #include <time.h>
 #include "mfs.h"
 #include "fsLow.h"
+#include "path.h"
+#include "fsInit.h"
 
 #define INVALID_BLOCK ((uint64_t)-1)  // Used to track if allocation failed
 #define EOC -2  // We define end of chain for FAT-like setup, useful for debugging later
@@ -31,108 +33,108 @@ uint64_t allocateBlocks(int blocksNeeded);  // From fsInit, reusing instead of w
 // fs_mkdir 
 
 int fs_mkdir(const char *pathname, mode_t mode) {
-    // We bail early if name is missing or too long, this avoids garbage in the FS
     if (pathname == NULL || strlen(pathname) == 0 || strlen(pathname) >= 32) {
-        printf("[mkdir] Invalid directory name given.\n");
+        printf("[mkdir] Invalid directory name.\n");
         return -1;
     }
 
-    // We calculate how many entries can fit in a block so we know loop bounds later
-    int entryCount = vcb->blockSize / sizeof(DirectoryEntry);
-
-    // This buffer will hold the root directory table; we'll add to it later
-    DirectoryEntry *rootBuf = malloc(vcb->blockSize);
-    if (!rootBuf) {
-        printf("[mkdir] Failed to allocate memory for root.\n");
+    // Copy pathname as parsepath modifies the input string
+    char *pathCopy = strdup(pathname);
+    if (!pathCopy) {
+        printf("[mkdir] Memory allocation error.\n");
         return -1;
     }
 
-    // Pull root directory block into memory so we can search it
-    if (LBAread(rootBuf, 1, vcb->rootDir) != 1) {
-        printf("[mkdir] Failed to read root directory from disk.\n");
-        free(rootBuf);
+    parsepathInfo ppI;
+    int parseResult = parsepath(pathCopy, &ppI);
+    free(pathCopy);
+
+    if (parseResult != 0) {
+        printf("[mkdir] Path parsing failed: %d\n", parseResult);
         return -1;
     }
 
-    // Check if directory already exists. It helps prevent duplicates
-    for (int i = 0; i < entryCount; i++) {
-        if (strncmp(rootBuf[i].name, pathname, 31) == 0) {
-            printf("[mkdir] Directory '%s' already exists.\n", pathname);
-            free(rootBuf);
-            return -1;
+    // Check if the directory already exists
+    if (ppI.index != -1) {
+        printf("[mkdir] Directory '%s' already exists.\n", ppI.lastElement);
+        if (ppI.parent != alrLoadedRoot && ppI.parent != alrLoadedcwd) {
+            free(ppI.parent);
         }
-    }
-
-    // Allocate fresh space for the directory contents – using calloc to zero it out
-    DirectoryEntry *ndir = calloc(entryCount, sizeof(DirectoryEntry));
-    if (!ndir) {
-        printf("[mkdir] Could not allocate memory for new dir block.\n");
-        free(rootBuf);
         return -1;
     }
 
-    // Ask disk for a free block. If this fails, there's no room left
-    uint64_t blk = allocateBlocks(1);
-    if (blk == INVALID_BLOCK) {
-        printf("[mkdir] No space left to allocate new block.\n");
-        free(rootBuf);
-        free(ndir);
+    // Ensure parent is a directory
+    if (!isDEaDir(ppI.parent)) {
+        printf("[mkdir] Parent is not a directory.\n");
+        if (ppI.parent != alrLoadedRoot && ppI.parent != alrLoadedcwd) {
+            free(ppI.parent);
+        }
         return -1;
     }
 
-    // We'll reuse this for timestamps so all three (created, mod, access) match
-    time_t now = time(NULL);
+    // Parent's own directory entry (the '.' entry)
+    DirectoryEntry *parentEntry = &ppI.parent[0];
 
-    // The "." entry just points to itself. Irequired in every directory
-    strcpy(ndir[0].name, ".");
-    ndir[0].isDir = 1;
-    ndir[0].startBlock = blk;
-    ndir[0].size = sizeof(DirectoryEntry) * 2;
-    ndir[0].created = ndir[0].modified = ndir[0].accessed = now;
-
-    // ".." should point back to parent (which is root for now)
-    strcpy(ndir[1].name, "..");
-    ndir[1].isDir = 1;
-    ndir[1].startBlock = rootBuf[0].startBlock;
-    ndir[1].created = ndir[1].modified = ndir[1].accessed = now;
-
-    // Actually write the new directory block to disk
-    if (LBAwrite(ndir, 1, blk) != 1) {
-        printf("[mkdir] Failed to write new directory block.\n");
-        free(rootBuf);
-        free(ndir);
+    // Create the new directory using createDir
+    DirectoryEntry *newDir = createDir(50, parentEntry);
+    if (!newDir) {
+        printf("[mkdir] Failed to create directory.\n");
+        if (ppI.parent != alrLoadedRoot && ppI.parent != alrLoadedcwd) {
+            free(ppI.parent);
+        }
         return -1;
     }
 
-    // We loop again to find a free slot in root and plug in the new folder info
+    // Find a free slot in the parent directory entries
+    int freeSlot = -1;
+    int entryCount = parentEntry->size / sizeof(DirectoryEntry);
     for (int i = 0; i < entryCount; i++) {
-        if (rootBuf[i].name[0] == '\0') {
-            strncpy(rootBuf[i].name, pathname, 31);
-            rootBuf[i].isDir = 1;
-            rootBuf[i].startBlock = blk;
-            rootBuf[i].size = sizeof(DirectoryEntry) * 2;
-            rootBuf[i].created = rootBuf[i].modified = rootBuf[i].accessed = now;
+        if (ppI.parent[i].name[0] == '\0') {
+            freeSlot = i;
             break;
         }
     }
 
-    // Save the updated root table back to disk now that it has the new entry
-    if (LBAwrite(rootBuf, 1, vcb->rootDir) != 1) {
-        printf("[mkdir] Failed to update root directory.\n");
-        free(rootBuf);
-        free(ndir);
+    if (freeSlot == -1) {
+        printf("[mkdir] Parent directory is full.\n");
+        free(newDir);
+        if (ppI.parent != alrLoadedRoot && ppI.parent != alrLoadedcwd) {
+            free(ppI.parent);
+        }
         return -1;
     }
 
-    // At this point, everything works. It prints block location for debugging
-    printf("[mkdir] New directory block allocated at %lu\n", blk);
-    printf("[mkdir] Directory '%s' created successfully.\n", pathname);
+    // Populate the new directory entry in the parent
+    strncpy(ppI.parent[freeSlot].name, ppI.lastElement, 31);
+    ppI.parent[freeSlot].name[31] = '\0';
+    ppI.parent[freeSlot].isDir = 1;
+    ppI.parent[freeSlot].startBlock = newDir[0].startBlock;
+    ppI.parent[freeSlot].size = newDir[0].size;
+    time_t now = time(NULL);
+    ppI.parent[freeSlot].created = now;
+    ppI.parent[freeSlot].modified = now;
+    ppI.parent[freeSlot].accessed = now;
 
-    free(rootBuf);
-    free(ndir);
+    // Write updated parent directory back to disk
+    int numBlocks = (parentEntry->size + vcb->blockSize - 1) / vcb->blockSize;
+    if (LBAwrite(ppI.parent, numBlocks, parentEntry->startBlock) != numBlocks) {
+        printf("[mkdir] Failed to update parent directory.\n");
+        free(newDir);
+        if (ppI.parent != alrLoadedRoot && ppI.parent != alrLoadedcwd) {
+            free(ppI.parent);
+        }
+        return -1;
+    }
+
+    // Cleanup
+    free(newDir);
+    if (ppI.parent != alrLoadedRoot && ppI.parent != alrLoadedcwd) {
+        free(ppI.parent);
+    }
+
+    printf("[mkdir] Directory '%s' created successfully at block %lu.\n", ppI.lastElement, newDir[0].startBlock);
     return 0;
 }
-
 // ------------------------------
 // fs_getcwd – just returns "/" for now since we don't track actual path
 // ------------------------------

@@ -11,8 +11,6 @@
 * Description:: 
 *
 **************************************************************/
-
-#include <b_io.c>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,9 +21,12 @@
 #include "mfs.h"
 #include "fsLow.h"
 
+#define B_CHUNK_SIZE 512 // block size in bytes
+
 // global pointers
-DirectoryEntry * alrLoadedRoot = NULL; // pointer for root
-DirectoryEntry * alrLoadedcwd = NULL;  // pointer for current working directory
+DirectoryEntry *alrLoadedRoot = NULL; // pointer for root
+DirectoryEntry *alrLoadedcwd = NULL;  // pointer for current working directory
+
 
 // helper function
 // checking if given directory entry is a directory

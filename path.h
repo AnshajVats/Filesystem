@@ -21,15 +21,20 @@
 #include <stdint.h>
 #include <dirent.h>
 
-#include "b_io.h"
 #include "mfs.h"
+extern DirectoryEntry * alrLoadedRoot; // pointer for root
+extern DirectoryEntry * alrLoadedcwd; 
 
-// int parsepath(char * pathname, parsepathInfo * ppI);
+
 
 typedef struct parsepathInfo{
 	DirectoryEntry * parent; // pointer to parent directory
 	int index;				 // index of entry in directory
 	char * lastElement;		 // name of last pathname
 } parsepathInfo;
+
+
+int parsepath(char * pathname, parsepathInfo * ppI);
+int isDEaDir(DirectoryEntry *de);
 
 #endif
