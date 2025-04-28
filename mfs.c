@@ -38,24 +38,10 @@ int fs_mkdir(const char *pathname, mode_t mode) {
         return -1;
     }
 
-    // Check if parent is valid
-    if (ppI.index != -1) {
-        printf("Directory already exists.\n");
-        if (ppI.parent != alrLoadedRoot && ppI.parent != alrLoadedcwd) free(ppI.parent);
-        return -1;
-    }
-
-    // Validate parent directory
-    if (!isDEaDir(ppI.parent)) {
-        printf("Parent is not a directory.\n");
-        if (ppI.parent != alrLoadedRoot && ppI.parent != alrLoadedcwd) free(ppI.parent);
-        return -1;
-    }
-
+  
     // Create new directory (using parent's metadata)
     DirectoryEntry *newDir = createDir(50, &ppI.parent[0]); // Parent's '.' entry
     if (!newDir) {
-        if (ppI.parent != alrLoadedRoot && ppI.parent != alrLoadedcwd) free(ppI.parent);
         return -1;
     }
 
@@ -71,7 +57,6 @@ int fs_mkdir(const char *pathname, mode_t mode) {
 
     if (freeSlot == -1) {
         free(newDir);
-        if (ppI.parent != alrLoadedRoot && ppI.parent != alrLoadedcwd) free(ppI.parent);
         return -1; // Parent full
     }
     // Populate new entry in parent
@@ -175,8 +160,6 @@ int fs_isDir(char *path) {
     parsepathInfo ppI;
     if (parsepath(path, &ppI) != 0) return 0;
     int ret = isDEaDir(&ppI.parent[ppI.index]);
-    free(ppI.lastElement);
-    if (ppI.parent != alrLoadedRoot && ppI.parent != alrLoadedcwd) free(ppI.parent);
     return ret;
 }
 // -----------------------------------------------------------------------------
@@ -188,8 +171,6 @@ int fs_isFile(char *path) {
     parsepathInfo ppI;
     if (parsepath(path, &ppI) != 0) return 0;
     int ret = !isDEaDir(&ppI.parent[ppI.index]);
-    free(ppI.lastElement);
-    if (ppI.parent != alrLoadedRoot && ppI.parent != alrLoadedcwd) free(ppI.parent);
     return ret;
 }
 
@@ -233,7 +214,11 @@ char *fs_getcwd(char *pathname, size_t size) {
 }
 
 
-// mfs.c
+// ------------------------------
+// fs_closedir – closes a directory and frees the memory
+// ------------------------------
+
+
 int fs_closedir(fdDir *dirp) {
     if (dirp) {
         free(dirp->dirEntries); // Free the directory entries

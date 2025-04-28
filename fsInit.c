@@ -235,6 +235,12 @@ int initFileSystem(uint64_t totalBlocks, uint64_t blockSize) {
         vcb->rootDir = root[0].startBlock;
         alrLoadedRoot = root; // Assign root directory to global pointer
         alrLoadedcwd = root;
+        if (LBAwrite(vcb, 1, 0) != 1) {
+            perror("Failed to write VCB to disk");
+            free(vcb);
+            return -1;
+        }
+
 
         // Log some useful values for verification
         printf("VCB Signature: 0x%lx\n", vcb->signature);
