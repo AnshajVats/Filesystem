@@ -38,10 +38,24 @@ int fs_mkdir(const char *pathname, mode_t mode) {
         return -1;
     }
 
-  
+    // Check if parent is valid
+    if (ppI.index != -1) {
+        printf("Directory already exists.\n");
+        if (ppI.parent != alrLoadedRoot && ppI.parent != alrLoadedcwd) free(ppI.parent);
+        return -1;
+    }
+
+    // Validate parent directory
+    if (!isDEaDir(ppI.parent)) {
+        printf("Parent is not a directory.\n");
+        if (ppI.parent != alrLoadedRoot && ppI.parent != alrLoadedcwd) free(ppI.parent);
+        return -1;
+    }
+
     // Create new directory (using parent's metadata)
     DirectoryEntry *newDir = createDir(50, &ppI.parent[0]); // Parent's '.' entry
     if (!newDir) {
+        if (ppI.parent != alrLoadedRoot && ppI.parent != alrLoadedcwd) free(ppI.parent);
         return -1;
     }
 
@@ -57,6 +71,7 @@ int fs_mkdir(const char *pathname, mode_t mode) {
 
     if (freeSlot == -1) {
         free(newDir);
+        if (ppI.parent != alrLoadedRoot && ppI.parent != alrLoadedcwd) free(ppI.parent);
         return -1; // Parent full
     }
     // Populate new entry in parent
@@ -148,7 +163,6 @@ struct fs_diriteminfo *fs_readdir(fdDir *dirp) {
 
     static struct fs_diriteminfo di;
     strncpy(di.d_name, de->name, sizeof(di.d_name));
-    di.fileType = de->isDir ? FT_DIRECTORY : FT_REGFILE;
 
     dirp->currentEntry++;
     return &di;
@@ -160,6 +174,8 @@ int fs_isDir(char *path) {
     parsepathInfo ppI;
     if (parsepath(path, &ppI) != 0) return 0;
     int ret = isDEaDir(&ppI.parent[ppI.index]);
+    free(ppI.lastElement);
+    if (ppI.parent != alrLoadedRoot && ppI.parent != alrLoadedcwd) free(ppI.parent);
     return ret;
 }
 // -----------------------------------------------------------------------------
@@ -171,6 +187,8 @@ int fs_isFile(char *path) {
     parsepathInfo ppI;
     if (parsepath(path, &ppI) != 0) return 0;
     int ret = !isDEaDir(&ppI.parent[ppI.index]);
+    free(ppI.lastElement);
+    if (ppI.parent != alrLoadedRoot && ppI.parent != alrLoadedcwd) free(ppI.parent);
     return ret;
 }
 
@@ -214,15 +232,83 @@ char *fs_getcwd(char *pathname, size_t size) {
 }
 
 
-// ------------------------------
-// fs_closedir – closes a directory and frees the memory
-// ------------------------------
-
-
+// mfs.c
 int fs_closedir(fdDir *dirp) {
     if (dirp) {
         free(dirp->dirEntries); // Free the directory entries
         free(dirp);             // Free the directory pointer
     }
+    return 0;
+}
+
+
+// -----------------------------------------------------------------------------
+// setcwd – set the current working directory
+// -----------------------------------------------------------------------------
+int fs_setcwd(char *path) {
+    if (!path) return -1;
+
+    // 1) Duplicate so parsepath can strtok_r it:
+    char *copy = strdup(path);
+    if (!copy) return -1;
+
+    // 2) Resolve via parsepath
+    parsepathInfo ppI;
+    if (parsepath(copy, &ppI) != 0) {
+      free(copy);
+      return -1;
+    }
+
+    // 3) Make sure it refers to a directory or root
+    if (ppI.index == -1 ||
+        (ppI.index >= 0 && !isDEaDir(&ppI.parent[ppI.index]))) {
+      // cleanup
+      free(ppI.lastElement);
+      if (ppI.parent!=alrLoadedRoot && ppI.parent!=alrLoadedcwd) free(ppI.parent);
+      free(copy);
+      return -1;
+    }
+
+    // 4) Swap in the new cwd entries
+    if (ppI.index == -2) {
+      // “/” case
+      if (alrLoadedcwd != alrLoadedRoot)
+        free(alrLoadedcwd);
+      alrLoadedcwd = alrLoadedRoot;
+    } else {
+      DirectoryEntry *d = &ppI.parent[ppI.index];
+      DirectoryEntry *newcwd = LoadDirectory(d);
+      if (!newcwd) {
+        // cleanup...
+        free(ppI.lastElement);
+        if (ppI.parent!=alrLoadedRoot && ppI.parent!=alrLoadedcwd) free(ppI.parent);
+        free(copy);
+        return -1;
+      }
+      if (alrLoadedcwd != alrLoadedRoot)
+        free(alrLoadedcwd);
+      alrLoadedcwd = newcwd;
+    }
+
+    // 5) Update a global cwdname for fs_getcwd()
+    if (strcmp(path, "/") == 0) {
+      strcpy(cwdname, "/");
+    } else if (path[0] == '/') {
+      snprintf(cwdname, sizeof(cwdname), "%s", path);
+    } else {
+      // relative → append
+      if (strcmp(cwdname, "/") == 0)
+        snprintf(cwdname, sizeof(cwdname), "/%s", path);
+      else
+        snprintf(cwdname, sizeof(cwdname), "%s/%s", cwdname, path);
+    }
+
+    printf("[setcwd] Changing cwd to %s\n", cwdname);
+
+    // 6) final cleanup
+    free(ppI.lastElement);
+    if (ppI.parent!=alrLoadedRoot && ppI.parent!=alrLoadedcwd) free(ppI.parent);
+    free(copy);
+
     return 0;
 }
