@@ -247,6 +247,61 @@ int initFileSystem(uint64_t totalBlocks, uint64_t blockSize) {
         printf("VCB Block Size: %lu\n", vcb->blockSize);
         printf("VCB Total Blocks: %lu\n", vcb->totalBlocks);
         printf("Root Directory Start Block: %lu\n", vcb->rootDir);
+    } 
+    else {
+        // Existing file system: Load FAT and root directory
+
+        // Load FAT into freeSpace
+        size_t fatBytes = vcb->totalBlocks * sizeof(int);
+        size_t fatBlocks = (fatBytes + vcb->blockSize - 1) / vcb->blockSize;
+
+        freeSpace = malloc(fatBlocks * vcb->blockSize);
+        if (!freeSpace) {
+            free(vcb);
+            return -1;
+        }
+
+        if (LBAread(freeSpace, fatBlocks, vcb->freeSpaceMap) != fatBlocks) {
+            free(freeSpace);
+            free(vcb);
+            return -1;
+        }
+
+        // Load root directory
+        uint64_t currentBlock = vcb->rootDir;
+        int blockCount = 0;
+
+        // Calculate the number of blocks in the root directory's chain
+        while (currentBlock != EOC && currentBlock != INVALID_BLOCK) {
+            blockCount++;
+            int nextBlock = freeSpace[currentBlock];
+            currentBlock = (nextBlock == EOC) ? INVALID_BLOCK : nextBlock;
+        }
+
+        DirectoryEntry *root = malloc(blockCount * vcb->blockSize);
+        if (!root) {
+            free(freeSpace);
+            free(vcb);
+            return -1;
+        }
+
+        currentBlock = vcb->rootDir;
+        int blocksRead = 0;
+        while (currentBlock != INVALID_BLOCK && blocksRead < blockCount) {
+            if (LBAread((char *)root + (blocksRead * vcb->blockSize), 1, currentBlock) != 1) {
+                free(root);
+                free(freeSpace);
+                free(vcb);
+                return -1;
+            }
+            blocksRead++;
+            int nextBlock = freeSpace[currentBlock];
+            currentBlock = (nextBlock == EOC) ? INVALID_BLOCK : nextBlock;
+        }
+
+        alrLoadedRoot = root;
+        alrLoadedcwd = root;
+        printf("Loaded existing root directory from block %lu\n", vcb->rootDir);
     }
 
     return 0;

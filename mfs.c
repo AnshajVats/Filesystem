@@ -26,7 +26,6 @@
 extern VCB *vcb; // This points to the volume control block (VCB) structure
 char cwdname[50] = "/";
 
-// mfs.c
 
 int fs_mkdir(const char *pathname, mode_t mode) {
     if (!pathname || strlen(pathname) >= 32) return -1;
@@ -140,7 +139,6 @@ fdDir *fs_opendir(const char *pathname) {
     return dir;
 }
 
-// mfs.c
 // -----------------------------------------------------------------------------
 // fs_readdir: iterate one entry at a time out of dirp->dirEntries[]
 // -----------------------------------------------------------------------------
@@ -304,11 +302,6 @@ int fs_setcwd(char *path) {
     }
 
     printf("[setcwd] Changing cwd to %s\n", cwdname);
-
-    // 6) final cleanup
-    free(ppI.lastElement);
-    if (ppI.parent!=alrLoadedRoot && ppI.parent!=alrLoadedcwd) free(ppI.parent);
-    free(copy);
 
     return 0;
 }
