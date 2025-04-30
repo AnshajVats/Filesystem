@@ -101,8 +101,10 @@ int displayFiles (fdDir * dirp, int flall, int fllong)
 	
 	di = fs_readdir (dirp);
 	printf("\n");
+	printf("di: ");
 	while (di != NULL) 
 		{
+			printf ("before if");
 		if ((di->d_name[0] != '.') || (flall)) //if not all and starts with '.' it is hidden
 			{
 			if (fllong)
