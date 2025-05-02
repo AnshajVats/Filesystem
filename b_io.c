@@ -1,9 +1,9 @@
 /**************************************************************
 * Class::  CSC-415-0# Spring 2024
-* Name::
-* Student IDs::
-* GitHub-Name::
-* Group-Name::
+* Name:: Karina Alvarado Mendoza
+* Student IDs:: 921299233
+* GitHub-Name:: Karina-Krystal
+* Group-Name:: Horse
 * Project:: Basic File System
 *
 * File:: b_io.c
@@ -20,6 +20,9 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include "b_io.h"
+#include <path.h>
+#define PATH_NO_VALUE_LEFT -2
+
 
 #define MAXFCBS 20
 #define B_CHUNK_SIZE 512
@@ -30,6 +33,12 @@ typedef struct b_fcb
 	char * buf;		//holds the open file buffer
 	int index;		//holds the current position in the buffer
 	int buflen;		//holds how many valid bytes are in the buffer
+	int flags;
+	parsepathInfo *pathInfo;
+	DirectoryEntry * fileEntry;
+	
+
+
 	} b_fcb;
 	
 b_fcb fcbArray[MAXFCBS];
@@ -53,7 +62,7 @@ b_io_fd b_getFCB ()
 	{
 	for (int i = 0; i < MAXFCBS; i++)
 		{
-		if (fcbArray[i].buff == NULL)
+		if (fcbArray[i].buf == NULL)
 			{
 			return i;		//Not thread safe (But do not worry about it for this assignment)
 			}
@@ -66,18 +75,64 @@ b_io_fd b_getFCB ()
 // O_RDONLY, O_WRONLY, or O_RDWR
 b_io_fd b_open (char * filename, int flags)
 	{
-	b_io_fd returnFd;
+	//validate the access mode
+	if ((flags & O_ACCMODE) == O_ACCMODE)
+	{
+		return -1;
+	}	
+	//int parsepath(char * pathname, parsepathInfo * ppI) {
+	parsepathInfo* pathInfo = (parsepathInfo*)malloc(sizeof(parsepathInfo));
+    if (!pathInfo || parsepath(filename, pathInfo) != 0 || pathInfo->lastElement == PATH_NO_VALUE_LEFT)
+    {
+        free(pathInfo);
+        return -1;
+    }
 
-	//*** TODO ***:  Modify to save or set any information needed
-	//
-	//
-		
-	if (startup == 0) b_init();  //Initialize our system
-	
-	returnFd = b_getFCB();				// get our own file descriptor
-										// check for error - all used FCB's
-	
-	return (returnFd);						// all set
+    if (pathInfo->lastElement == -1)
+    {
+        if ((flags & O_CREAT) != O_CREAT || createFile(pathInfo) == -1)
+        {
+            freeParsedpathInfo(pathInfo);
+            free(pathInfo);
+            return -1;
+        }
+        pathInfo->lastElement = LocateEntry(pathInfo->parent);
+    }
+    //checking if the index we are currently in is a directory
+    if (isDir(&pathInfo->parent[pathInfo->index]))
+    {
+        freeParsedpathInfo(pathInfo);
+        free(pathInfo);
+        return -1;
+    }
+
+    if ((flags & O_TRUNC) == O_TRUNC && truncatedOfFile(pathInfo) == -1)
+    {
+        freeParsedpathInfo(pathInfo);
+        free(pathInfo);
+        return -1;
+    }
+
+    if (startup == 0)
+        b_init();
+
+    b_io_fd returnFd = b_getFCB();
+    if (returnFd == -1)
+    {
+        freeParsedpathInfo(pathInfo);
+        free(pathInfo);
+        return -1;
+    }
+
+    fcbArray[returnFd].buf = (char*)malloc(B_CHUNK_SIZE);
+    if (!fcbArray[returnFd].buf)
+    {
+        freeParsedpathInfo(pathInfo);
+        free(pathInfo);
+        return -1;
+    }
+
+	b_io_fd returnFd;
 	}
 
 
@@ -148,8 +203,42 @@ int b_read (b_io_fd fd, char * buffer, int count)
 	return (0);	//Change this
 	}
 	
-// Interface to Close the file	
-int b_close (b_io_fd fd)
-	{
+// Interface to Close the file
+int b_close(b_io_fd fd)
+{
+    // Validate the file descriptor
+    if (fd < 0 || fd >= MAXFCBS || fcbArray[fd].buf == NULL)
+    {
+        return -1;
+    }
 
-	}
+    b_fcb* fcb = &fcbArray[fd];
+
+    // Write back dirty data if the file is not read-only
+    if ((fcb->flags & O_ACCMODE) != O_RDONLY)
+    {
+        flushBuffer(fcb);
+
+        // Handle empty file cleanup
+        if (fcb->fileEntry->size == 0 && fcb->fileEntry->startBlock > 0)
+        {
+            freeBlocks(fcb->fileEntry->startBlock);
+        }
+        else
+        {
+            changeBlocksAllocate(fcb->fileEntry->startBlock,
+                                 sizeToBlocks(fcb->fileEntry->size, B_CHUNK_SIZE));
+        }
+    }
+
+    // Free resources associated with the file
+    freeParsedpathInfo(fcb->pathInfo);
+    free(fcb->pathInfo);
+    fcb->pathInfo = NULL;
+    fcb->fileEntry = NULL;
+
+    free(fcb->buf);
+    fcb->buf = NULL;
+
+    return 0;
+}
