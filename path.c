@@ -20,6 +20,7 @@
 #include "path.h"
 #include "mfs.h"
 #include "fsLow.h"
+#include "fsInit.h"
 
 #define B_CHUNK_SIZE 512 // block size in bytes
 
@@ -28,125 +29,119 @@
 
 // helper function
 // checking if given directory entry is a directory
-int isDEaDir(DirectoryEntry *de){
-    if(de == NULL){
-        return 0;
-    }
-    return de->isDir;
-}
 
-// helper function
-// finds given directory
-int FindInDirectory(DirectoryEntry *entry, const char * name){
-    if(!isDEaDir(entry)){
-        return -1;
-    }
-
-    // iterates through entries to find match
-    for (int i = 0; i < 32; i++) {
-        
-        // checking if dir is valid
-        if (entry[i].name[0] == '\0') {
-            break;
-        }
-        if(strcmp(entry[i].name, name) == 0){
-            return i;
+int findInDir(DE* searchDirectory, char* name){
+    int res = -1;
+    for( int i = 0; i < DECOUNT; i++) {
+        if( searchDirectory[i].location != -2l && strcmp(searchDirectory[i].name, name ) == 0) {
+            res = i;
         }
     }
-    return -1;
+    return res;
 }
 
-// accepting one directory entry/some index in array
-// path.c
-DirectoryEntry *LoadDirectory(DirectoryEntry *cwd) {
-    if (!cwd || !isDEaDir(cwd) || cwd->size <= 0) {
-        return NULL; // Validate size
-    }
 
-    // Calculate block count using directory size and block size
-    int lbaCount = (cwd->size + B_CHUNK_SIZE - 1) / B_CHUNK_SIZE;
-
-    // Allocate block-aligned memory
-    DirectoryEntry *dir = malloc(lbaCount * B_CHUNK_SIZE); // <-- Fixed
-    if (!dir) return NULL;
-
-    // Load directory blocks from disk
-    if (LBAread(dir, lbaCount, cwd->startBlock) != lbaCount) {
-        free(dir);
+DE* loadDir(DE* searchDirectory, int index) {
+    int size = calculateFormula(DE_SIZE, MINBLOCKSIZE);
+    int loc = searchDirectory[index].location;
+    struct DE* directories = (struct DE*)malloc(DE_SIZE);
+    int res = fileRead(directories, size, loc);
+    if( res == -1 ) {
+        free(directories);
         return NULL;
     }
-    return dir;
+    return directories;
 }
-// needed for most functions
-int parsepath(char * pathname, parsepathInfo * ppI) {
 
-    // variable in use
-    DirectoryEntry * parent;        // pointer to current directory
-    DirectoryEntry * startParent;   // pinter to start of directory
-    char * savePtr;                 // keep track of strtok_r position
-    char * token1;                  // first pathname iterated
-    char * token2;                  // for next iteration
-
-    // check if pathname exists
-    if (pathname == NULL) {
+int parsePath(const char* pathName, PPRETDATA *ppinfo){
+    if(pathName == NULL || ppinfo == NULL) {
+        fprintf(stderr, "invalid pointers");
         return -1;
     }
-
-    // checking where we are
-    if(pathname[0] == '/') {
-        startParent = alrLoadedRoot;
-    } else{
-        startParent = alrLoadedcwd;
+    struct DE* currDirectory;
+    if(pathName[0] == '/'){
+        currDirectory = loadDir(root, 0);
     }
-
-    // initialize parent as starting directory
-    parent = startParent;
-
-    // tokenize pathname
-    token1 = strtok_r(pathname, "/", &savePtr);
-
-    // checking if token1 is root
-    if(token1 == NULL){
-        // handles token as root
-        if(pathname[0] == '/'){
-            ppI->parent = parent;
-            ppI->index = -2; // since root has no name and cannot be -1
-            ppI->lastElement = NULL;
+    else {
+        currDirectory = loadDir(cwd, 0);
+    }
+    char* savePtr = NULL;
+    char* path = strdup(pathName);
+    char* currToken = strtok_r(path, "/", &savePtr);
+    if( currToken == NULL ) {
+        if(pathName[0] == '/') {
+            memcpy(ppinfo->parent, currDirectory, DE_SIZE);
+            ppinfo->lastElementIndex = -2;
+            ppinfo->lastElementName = NULL;
+            free(path);
+            free(currDirectory);
             return 0;
-        } else{
+        }
+        else {
+            free(path);
+            free(currDirectory);
+            fprintf(stderr, "invalid path\n");
             return -1;
         }
     }
-
-    while (1) {
-        int index = FindInDirectory(parent, token1);
-        // next token for next pathname
-        token2 = strtok_r(NULL, "/", &savePtr);
-        
-        // checking if it is last element
-        if(token2 == NULL){
-            ppI->parent = parent;
-            ppI->index = index;
-            ppI->lastElement = token1;
-            return 0;
-        } else{
-            if(index == -1){
-                return -2;
+    struct DE* prevDirectory = malloc(DE_SIZE);
+    memcpy(prevDirectory, currDirectory, DE_SIZE);
+    int index = findInDir(prevDirectory, currToken);
+    if(index != -1 && prevDirectory[index].isDirectory) {
+        currDirectory = loadDir(prevDirectory, index);
+    }
+    char* prevToken = currToken;
+    while( (currToken = strtok_r(NULL, "/", &savePtr)) != NULL ) {
+        memcpy(prevDirectory, currDirectory, DE_SIZE);
+        index = findInDir(prevDirectory, currToken);
+        if( index == -1 ) {
+            prevToken = currToken;
+            currToken = strtok_r(NULL, "/", &savePtr);
+            if( currToken == NULL ) {
+                memcpy(ppinfo->parent, prevDirectory, DE_SIZE);
+                ppinfo->lastElementIndex = -1;
+                ppinfo->lastElementName = prevToken;
+                return 0;
             }
-            if(!isDEaDir(&(parent[index]))){
+            else {
+                fprintf(stderr, "invalid path\n");
                 return -1;
             }
-            DirectoryEntry * tempParent = LoadDirectory(&(parent[index]));
-            if(tempParent == NULL){
+        }
+        else if(prevDirectory[index].isDirectory) {
+            currDirectory = loadDir(prevDirectory, index);
+        }
+        else {
+            prevToken = currToken;
+            currToken = strtok_r(NULL, "/", &savePtr);
+            if( currToken == NULL ) {
+                break;
+            }
+            else {
+                fprintf(stderr, "invalid path\n");
                 return -1;
             }
-            if(parent != startParent){
-                free(parent);
-            }
-            parent = tempParent;
-            token1 = token2;
         }
     }
-    
+    memcpy(ppinfo->parent, prevDirectory, DE_SIZE);
+    ppinfo->lastElementName = prevToken;
+    ppinfo->lastElementIndex = index;
+    if( currDirectory != cwd && currDirectory != root ) {
+        free(currDirectory);
+    }
     return 0;
+}
+
+int find_vacant_space (DE * directory , char * fileName){
+	for (int i = 0 ; i < (directory->size)/sizeof(struct DE) ; i++ ) {
+		if ( strcmp(fileName, (directory +i)->name) == 0) {
+			fprintf(stderr, "Duplicate found");
+			return -1;
+		}
+		if ( (directory + i)->location == -2 ){
+			return i;
+		}
+	}
+	fprintf(stderr, "Directory is full");
+	return -1;
 }

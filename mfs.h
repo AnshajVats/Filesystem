@@ -24,6 +24,7 @@
 #include <stdint.h>
 
 #include "b_io.h"
+#include "fsInit.h"
 
 #include <dirent.h>
 #define FT_REGFILE   1 
@@ -37,28 +38,41 @@ typedef u_int64_t uint64_t;
 typedef u_int32_t uint32_t;
 #endif
 
+struct VCB
+{
+	long signature;		   
+	int totalBlocks;	   
+	int blockSize;		  
+	int freeSpaceLocation; 
+	int freeSpaceSize;     
+	int rootLocation;	   
+	int rootSize;		
+	int firstBlock;		   
+	int totalFreeSpace;	   
+};
+typedef struct VCB VCB;
 
-#pragma pack(push, 1) // Ensure no padding
-typedef struct VCB {
-	uint64_t signature;      // Signature to identify the filesystem
-	uint64_t blockSize;     // Size of each block in bytes
-	uint64_t totalBlocks;   // Total number of blocks on disk
-	uint64_t freeSpaceMap;  // Block number where free space map starts
-	uint64_t rootDir;       // Block number where root directory starts
-} VCB;
-#pragma pack(pop)
+// Specifications for directory entry
+struct DE
+{
+	char name[DE_NAME_SIZE];
+	int isDirectory;
+	int location;
+	int size;	
+	time_t dateCreated;
+	time_t dateModified;
+	time_t dateLastAccessed;
+};
+typedef struct DE DE;
 
-#pragma pack(push, 1)
-typedef struct DirectoryEntry {
-    char name[32];          // File/directory name
-    uint8_t isDir;          // 1 = directory, 0 = file
-    uint64_t size;          // Size in bytes
-    uint64_t startBlock;    // Starting block on disk
-    time_t created;
-    time_t modified;
-    time_t accessed;
-} DirectoryEntry;
-#pragma pack(pop)
+
+struct parsePathData{
+    struct DE* parent;
+    int lastElementIndex;
+    char* lastElementName;
+};
+
+typedef struct parsePathData PPRETDATA;
 
 // This structure is returned by fs_readdir to provide the caller with information
 // about each file as it iterates through a directory
@@ -77,7 +91,6 @@ struct fs_diriteminfo
 typedef struct {
 	unsigned short  d_reclen;		/* length of this record */
 	unsigned short	dirEntryPosition;
-    DirectoryEntry *dirEntries;  // Pointer to loaded directory
     int currentEntry;           // Current position for readdir
 } fdDir;
 
@@ -97,6 +110,7 @@ int fs_setcwd(char *pathname);   //linux chdir
 int fs_isFile(char * filename);	//return 1 if file, 0 otherwise
 int fs_isDir(char * pathname);		//return 1 if directory, 0 otherwise
 int fs_delete(char* filename);	//removes a file
+int calculateFormula(int i, int j);
 
 
 // This is the strucutre that is filled in from a call to fs_stat

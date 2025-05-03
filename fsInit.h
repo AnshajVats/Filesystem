@@ -3,8 +3,26 @@
 
 #include "mfs.h"  // Assuming DirectoryEntry is defined here
 
-DirectoryEntry *createDir(int entryCount, DirectoryEntry *parent);
-int initFileSystem(uint64_t totalBlocks, uint64_t blockSize);
-void exitFileSystem();
+#define DE_NAME_SIZE 28
+#define DEFAULTDIRSIZE 56
+#define DE_SIZE DEFAULTDIRSIZE * sizeof(DE)
+#define DECOUNT ((DE_SIZE) / sizeof(DE))
+
+// Specifications for volume control block
+
+/*
+ * @brief
+ * @param
+ * @param
+ * @return
+ */
+extern struct VCB *volumeControlBlock;
+extern struct DE *root;
+extern struct DE *cwd;
+extern char * cwdPathName;
+extern int *fat;
+int createDirectory(int numberOfEntries, struct DE *parent); // struct DE not DE cause it is imported in mfs.h so doesn't know DE
+int fileRead(void* buff, int numberOfBlocks, int location);
+int fileWrite(void* buff, int numberOfBlocks, int location);
 
 #endif
