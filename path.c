@@ -53,82 +53,90 @@ DE* loadDir(DE* searchDirectory, int index) {
     return directories;
 }
 
-int parsePath(const char* pathName, PPRETDATA *ppinfo){
-    if(pathName == NULL || ppinfo == NULL) {
-        fprintf(stderr, "invalid pointers");
+void freeDirectory(DE *dir) {
+    if (dir != cwd && dir != root) {
+        free(dir);
+    }
+}
+
+struct DE* getStartingDirectory(const char* pathName) {
+    return (pathName[0] == '/') ? loadDir(root, 0) : loadDir(cwd, 0);
+}
+
+int handleRootCase(const char* pathName, DE* currDir, PPRETDATA* ppinfo) {
+    if (pathName[0] == '/') {
+        memcpy(ppinfo->parent, currDir, DE_SIZE);
+        ppinfo->lastElementIndex = -2;
+        ppinfo->lastElementName = NULL;
+        return 0;
+    }
+    fprintf(stderr, "invalid path\n");
+    return -1;
+}
+
+int processDirectoryComponent(DE** currDir, char* token) {
+    int index = findInDir(*currDir, token);
+    if (index == -1 || !(*currDir)[index].isDirectory) {
+        fprintf(stderr, "Component '%s' not found or not a directory\n", token);
+        return 0;
+    }
+    
+    DE* newDir = loadDir(*currDir, index);
+    if (!newDir) return 0;
+    
+    freeDirectory(*currDir);
+    *currDir = newDir;
+    return 1;
+}
+
+void processLastComponent(DE* currDir, char* token, PPRETDATA* ppinfo) {
+    int index = findInDir(currDir, token);
+    memcpy(ppinfo->parent, currDir, DE_SIZE);
+    ppinfo->lastElementIndex = index;
+    ppinfo->lastElementName = strdup(token); // Remember to free this later
+}
+
+int parsePath(const char* pathName, PPRETDATA* ppinfo) {
+    if (!pathName || !ppinfo) {
+        fprintf(stderr, "Invalid pointers\n");
         return -1;
     }
-    struct DE* currDirectory;
-    if(pathName[0] == '/'){
-        currDirectory = loadDir(root, 0);
+
+    DE* currDir = getStartingDirectory(pathName);
+    if (!currDir) return -1;
+
+    char* pathCopy = strdup(pathName);
+    if (!pathCopy) {
+        freeDirectory(currDir);
+        return -1;
     }
-    else {
-        currDirectory = loadDir(cwd, 0);
+
+    char *savePtr, *currToken = strtok_r(pathCopy, "/", &savePtr);
+    if (!currToken) {
+        int result = handleRootCase(pathName, currDir, ppinfo);
+        free(pathCopy);
+        freeDirectory(currDir);
+        return result;
     }
-    char* savePtr = NULL;
-    char* path = strdup(pathName);
-    char* currToken = strtok_r(path, "/", &savePtr);
-    if( currToken == NULL ) {
-        if(pathName[0] == '/') {
-            memcpy(ppinfo->parent, currDirectory, DE_SIZE);
-            ppinfo->lastElementIndex = -2;
-            ppinfo->lastElementName = NULL;
-            free(path);
-            free(currDirectory);
-            return 0;
+
+    while (1) {
+        char *nextToken = strtok_r(NULL, "/", &savePtr);
+        
+        if (!nextToken) { // Last component
+            processLastComponent(currDir, currToken, ppinfo);
+            break;
         }
-        else {
-            free(path);
-            free(currDirectory);
-            fprintf(stderr, "invalid path\n");
+        
+        if (!processDirectoryComponent(&currDir, currToken)) {
+            free(pathCopy);
+            freeDirectory(currDir);
             return -1;
         }
+        currToken = nextToken;
     }
-    struct DE* prevDirectory = malloc(DE_SIZE);
-    memcpy(prevDirectory, currDirectory, DE_SIZE);
-    int index = findInDir(prevDirectory, currToken);
-    if(index != -1 && prevDirectory[index].isDirectory) {
-        currDirectory = loadDir(prevDirectory, index);
-    }
-    char* prevToken = currToken;
-    while( (currToken = strtok_r(NULL, "/", &savePtr)) != NULL ) {
-        memcpy(prevDirectory, currDirectory, DE_SIZE);
-        index = findInDir(prevDirectory, currToken);
-        if( index == -1 ) {
-            prevToken = currToken;
-            currToken = strtok_r(NULL, "/", &savePtr);
-            if( currToken == NULL ) {
-                memcpy(ppinfo->parent, prevDirectory, DE_SIZE);
-                ppinfo->lastElementIndex = -1;
-                ppinfo->lastElementName = prevToken;
-                return 0;
-            }
-            else {
-                fprintf(stderr, "invalid path\n");
-                return -1;
-            }
-        }
-        else if(prevDirectory[index].isDirectory) {
-            currDirectory = loadDir(prevDirectory, index);
-        }
-        else {
-            prevToken = currToken;
-            currToken = strtok_r(NULL, "/", &savePtr);
-            if( currToken == NULL ) {
-                break;
-            }
-            else {
-                fprintf(stderr, "invalid path\n");
-                return -1;
-            }
-        }
-    }
-    memcpy(ppinfo->parent, prevDirectory, DE_SIZE);
-    ppinfo->lastElementName = prevToken;
-    ppinfo->lastElementIndex = index;
-    if( currDirectory != cwd && currDirectory != root ) {
-        free(currDirectory);
-    }
+
+    free(pathCopy);
+    freeDirectory(currDir);
     return 0;
 }
 
