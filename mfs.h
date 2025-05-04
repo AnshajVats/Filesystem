@@ -116,7 +116,7 @@ int fs_isFile(char * filename);	//return 1 if file, 0 otherwise
 int fs_isDir(char * pathname);		//return 1 if directory, 0 otherwise
 int fs_delete(char* filename);	//removes a file
 int calculateFormula(int i, int j);
-char* getLastElement(char* path);
+char* getLastElement(const char* path);
 
 
 // This is the strucutre that is filled in from a call to fs_stat

@@ -165,20 +165,28 @@ int calculateFormula(int i, int j){
     return (i+j-1)/j;
 }
 
-char* getLastElement(char* path) {
-    if (strlen(path) == 1 && path[0] == '/') return ".";
-    char* lastSlash = strrchr(path, '/');
-    if (lastSlash) {
-        // Check path ends with slash
-        if (*(lastSlash + 1) == '\0') {
-            char* p = strdup(path);
-            p[strlen(p) - 1] = '\0';
-            lastSlash = strrchr(p, '/');
-        }
-        return lastSlash + 1;
+
+char* getLastElement(const char* path) {
+    if (strlen(path) == 1 && path[0] == '/') {
+        return strdup("."); // Return allocated string
     }
-    return path;
+
+    const char* lastSlash = strrchr(path, '/');
+    if (!lastSlash) return strdup(path); // No slashes found
+
+    // Handle trailing slash
+    if (*(lastSlash + 1) == '\0') {
+        char* p = strdup(path);
+        p[strlen(p)-1] = '\0'; // Remove trailing slash
+        const char* newSlash = strrchr(p, '/');
+        char* result = newSlash ? strdup(newSlash + 1) : strdup(p);
+        free(p);
+        return result;
+    }
+
+    return strdup(lastSlash + 1); // Return allocated substring
 }
+
 
 //----------------------------------------------------------------
 // fs_mdLs
@@ -193,7 +201,7 @@ fdDir * fs_opendir(const char *pathname) {
         return NULL;
     }
 
-    char* path = pathname;
+    const char* path = pathname;
     char* lastElementName = getLastElement(path);
     int index = findInDir(ppinfo->parent, lastElementName);
 
