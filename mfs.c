@@ -96,7 +96,7 @@ int write_parent_directory(DE* parentDir) {
 }
 
 
-/*            mkdir Function          */
+        /*  mkdir Function   */
 
 
 // fs_mkdir – Creates a new folder at a given path
@@ -140,4 +140,5 @@ fail_cleanup:
     }
     return -1;
 }
+
 
