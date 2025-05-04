@@ -521,3 +521,70 @@ int fs_delete(char* filename) {
     free(ppinfo);
     return 0;
 }
+
+// ----------------------------------------------------------------
+// fs_mv
+// This function moves a file or directory from one path to another.
+// ----------------------------------------------------------------
+int fs_mv(const char* startpathname, const char* endpathname) {
+    PPRETDATA *startppinfo = malloc( sizeof(PPRETDATA));
+    startppinfo->parent = malloc( DE_SIZE );
+    int startRes = parsePath(startpathname, startppinfo);
+    int startIndex = startppinfo->lastElementIndex;
+    if( startRes == -1 || startIndex < 2) {
+        free(startppinfo->parent);
+        free(startppinfo);
+        return -1;
+    }
+
+    PPRETDATA *endppinfo = malloc( sizeof(PPRETDATA));
+    endppinfo->parent = malloc( DE_SIZE );
+    int endRes = parsePath(endpathname, endppinfo);
+    int endIndex = endppinfo->lastElementIndex;
+    if( endRes == -1 || endIndex == -1 || endppinfo->parent[endIndex].isDirectory == 0) {
+        free(startppinfo->parent);
+        free(startppinfo);
+        free(endppinfo->parent);
+        free(endppinfo);
+        return -1;
+    }
+
+    struct DE* endDir = loadDir(endppinfo->parent, endIndex);
+    int emptyIndex = findInDir(endDir, startppinfo->lastElementName);
+    if( emptyIndex == -1) {
+        emptyIndex = find_vacant_space(endDir, startppinfo->lastElementName);
+    }
+    else if(endDir[emptyIndex].location > 0){
+        returnFreeBlocks(endDir[emptyIndex].location);
+    }
+    if(emptyIndex == -1) {
+        free(startppinfo->parent);
+        free(startppinfo);
+        free(endppinfo->parent);
+        free(endppinfo);
+        free(endDir);
+        return -1;
+    }
+
+    struct DE* parentDir = startppinfo->parent;
+    struct DE sourceDir = parentDir[startIndex];
+    endDir[emptyIndex] = sourceDir;
+    if( sourceDir.isDirectory == 1 ) {
+        struct DE* tempDir = loadDir(parentDir, startIndex);
+        tempDir[1] = endDir[0];
+        strncpy(tempDir[1].name, "..", DE_NAME_SIZE);
+        fileWrite(tempDir, calculateFormula(DE_SIZE, MINBLOCKSIZE), tempDir->location);
+        free(tempDir);
+    }
+    parentDir[startIndex].location = -2l;
+
+    fileWrite(endDir, calculateFormula(DE_SIZE, MINBLOCKSIZE), endDir->location);
+    fileWrite(parentDir, calculateFormula(DE_SIZE, MINBLOCKSIZE), parentDir->location);
+
+    free(startppinfo->parent);
+    free(startppinfo);
+    free(endppinfo->parent);
+    free(endppinfo);
+    free(endDir);
+    return 0;
+}
