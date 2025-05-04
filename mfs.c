@@ -422,111 +422,113 @@ int fs_closedir(fdDir* dirp) {
 }
 
 
-//----------------------------------------------------------------
-// fs_isFile
-// This function checks if a given path is a file.
-//-------------------------------------------------------------------
-//return 1 if directory, 0 otherwise
-int fs_isDir(char * pathname){
-    PPRETDATA *ppinfo = malloc(sizeof(PPRETDATA));
-    ppinfo->parent = malloc(DE_SIZE);
-    int res = parsePath(pathname, ppinfo);
+/* ====== Directory Type & Deletion Functions (fs_isDir, fs_isFile, fs_rmdir, fs_delete) ====== */
 
-    if (res == -1 || ppinfo->lastElementIndex < 0) {
-        free(ppinfo->parent);
-        free(ppinfo);
-        return 0;
+// We use this to check if a given path refers to a directory.
+// It helps us verify whether we can navigate into it or apply operations like rmdir.
+int fs_isDir(char* pathname) {
+    PPRETDATA* pathInfo = malloc(sizeof(PPRETDATA));
+    pathInfo->parent = malloc(DE_SIZE);
+
+    int parsed = parsePath(pathname, pathInfo);
+    if (parsed == -1 || pathInfo->lastElementIndex < 0) {
+        free(pathInfo->parent);
+        free(pathInfo);
+        return 0;  // Not a directory or path doesn't exist
     }
 
-    int returnStatement = ppinfo->parent[ppinfo->lastElementIndex].isDirectory;
-    free(ppinfo->parent);
-    free(ppinfo);
-    return returnStatement;
+    int isDirectory = pathInfo->parent[pathInfo->lastElementIndex].isDirectory;
+    free(pathInfo->parent);
+    free(pathInfo);
+    return isDirectory;
 }
 
-//return 1 if file, 0 otherwise
-int fs_isFile(char * filename){
-	int index = findInDir(cwd, filename);
-    if( index == -1 ) {
-        return -1;
-    }
-	return !cwd[index].isDirectory;
+// We use this to check if the provided name in the current directory is a file.
+// This is helpful to validate file operations like delete or open.
+int fs_isFile(char* filename) {
+    int index = findInDir(cwd, filename);
+    if (index == -1) return -1;  // Not found in current directory
+    return !cwd[index].isDirectory;  // Return true if not a directory
 }
 
-//-----------------------------------------------------------------
-// fs_rmdir
-// This function removes a directory at the specified path.
-//-----------------------------------------------------------------
+
+// We use this to check if a directory is empty (only has "." and ".." entries).
+// It's required before we safely remove a directory.
 int isEmpty(DE* dir) {
     if (!dir) return 0;
-    
-    // Use actual directory size instead of DECOUNT
-    int entry_count = dir[0].size / sizeof(DE);
-    for (int i = 2; i < entry_count; i++) {
-        if (dir[i].location > 0) return 0;
+
+    int entryCount = dir[0].size / sizeof(DE);
+    for (int i = 2; i < entryCount; i++) {
+        if (dir[i].location > 0) return 0;  // Found something other than "." or ".."
     }
     return 1;
 }
 
-int fs_rmdir(const char *pathname) {
-    PPRETDATA *ppinfo = NULL;
-    DE *currDir = NULL;
+
+// We use this to remove a directory from the file system.
+// This only succeeds if the directory is valid and completely empty.
+int fs_rmdir(const char* pathname) {
+    PPRETDATA* pathInfo = NULL;
+    DE* dirContent = NULL;
     int result = -1;
 
-    if (!(ppinfo = parse_path(pathname))) goto cleanup;
-    if (ppinfo->lastElementIndex < 0) goto cleanup;
+    pathInfo = parse_path(pathname);
+    if (!pathInfo || pathInfo->lastElementIndex < 0) goto cleanup;
 
-    DE* entry = &ppinfo->parent[ppinfo->lastElementIndex];
-    if (!entry->isDirectory) goto cleanup;
+    DE* dirEntry = &pathInfo->parent[pathInfo->lastElementIndex];
+    if (!dirEntry->isDirectory) goto cleanup;
 
-    if (!(currDir = loadDir(entry, 0))) goto cleanup;
-    if (!isEmpty(currDir)) {
+    dirContent = loadDir(dirEntry, 0);
+    if (!dirContent || !isEmpty(dirContent)) {
         printf("Error: Directory not empty '%s'\n", pathname);
         goto cleanup;
     }
 
-    if (returnFreeBlocks(entry->location) == -1) goto cleanup;
-    
-    entry->location = -2;
-    result = write_parent_directory(ppinfo->parent);
+    if (returnFreeBlocks(dirEntry->location) == -1) goto cleanup;
+    dirEntry->location = -2;  // Invalidate the entry
+
+    result = write_parent_directory(pathInfo->parent);
 
 cleanup:
-    if (currDir) free(currDir);
-    if (ppinfo) {
-        free(ppinfo->parent);
-        free(ppinfo);
+    if (dirContent) free(dirContent);
+    if (pathInfo) {
+        free(pathInfo->parent);
+        free(pathInfo);
     }
     return result;
 }
 
-//----------------------------------------------------------------
-// fs_delete
-// This function deletes a file at the specified path.
-//-------------------------------------------------------------------
+
+// We use this to delete a file from the file system.
+// It cleans up the storage blocks and marks the entry as removed.
 int fs_delete(char* filename) {
-    PPRETDATA* ppinfo = parse_path(filename);
-    if (!ppinfo || ppinfo->lastElementIndex < 0) return -1;
+    PPRETDATA* pathInfo = parse_path(filename);
+    if (!pathInfo || pathInfo->lastElementIndex < 0) return -1;
 
-    DE* entry = &ppinfo->parent[ppinfo->lastElementIndex];
-    
-    // Validate file
-    if (entry->isDirectory) {
+    DE* fileEntry = &pathInfo->parent[pathInfo->lastElementIndex];
+
+    // If it's a directory, we don't allow deletion via fs_delete.
+    if (fileEntry->isDirectory) {
         fprintf(stderr, "Cannot delete directory with fs_delete\n");
-        goto cleanup;
+        free(pathInfo->parent);
+        free(pathInfo);
+        return -1;
     }
 
-    // Free resources
-    if (entry->size > 0 && returnFreeBlocks(entry->location) == -1) goto cleanup;
-    entry->location = -2;
+    if (fileEntry->size > 0 && returnFreeBlocks(fileEntry->location) == -1) {
+        free(pathInfo->parent);
+        free(pathInfo);
+        return -1;
+    }
 
-    // Write changes
-    int result = write_parent_directory(ppinfo->parent);
+    fileEntry->location = -2;  // Mark the file entry as invalid
+    int result = write_parent_directory(pathInfo->parent);
 
-cleanup:
-    free(ppinfo->parent);
-    free(ppinfo);
+    free(pathInfo->parent);
+    free(pathInfo);
     return result;
 }
+
 
 // ----------------------------------------------------------------
 // fs_mv
