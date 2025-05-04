@@ -275,86 +275,96 @@ char* getLastElement(const char* path) {
 }
 
 
-//----------------------------------------------------------------
-// fs_mdLs
-// This function lists the contents of a directory.
-//-------------------------------------------------------------------
-fdDir * fs_opendir(const char *pathname) {
-    PPRETDATA *ppinfo = malloc(sizeof(PPRETDATA));
-    ppinfo->parent = malloc(DE_SIZE); // TODO: why not malloc in pp?
-    int res = parsePath(pathname, ppinfo);
+/* ====== Directory Listing Functions (fs_opendir, fs_readdir) ====== */
 
-    if (res == -1) {
+// We open a directory stream so we can later read its contents (like how `ls` works).
+fdDir* fs_opendir(const char* pathname) {
+    // We start by preparing to parse the path (e.g., "/folder/sub")
+    PPRETDATA* pathInfo = malloc(sizeof(PPRETDATA));
+    pathInfo->parent = malloc(DE_SIZE);
+
+    // We break the path into components so we can find the final directory
+    if (parsePath(pathname, pathInfo) == -1) {
+        free(pathInfo->parent);
+        free(pathInfo);
         return NULL;
     }
 
-    const char* path = pathname;
-    char* lastElementName = getLastElement(path);
-    int index = findInDir(ppinfo->parent, lastElementName);
+    // We isolate the last element (e.g., "sub" in "/folder/sub")
+    char* entryName = getLastElement(pathname);
+    int entryIndex = findInDir(pathInfo->parent, entryName);
 
-    if (index == -1) {
-        fprintf(stderr, "fs_opendir: %s not found\n", lastElementName);
+    // If the directory doesn't exist in its parent, return an error
+    if (entryIndex == -1) {
+        fprintf(stderr, "fs_opendir: %s not found\n", entryName);
+        free(pathInfo->parent);
+        free(pathInfo);
         return NULL;
     }
 
-    struct DE entry = ppinfo->parent[index];
+    // We now confirm that the located entry is actually a directory
+    DE entry = pathInfo->parent[entryIndex];
     if (!entry.isDirectory) {
         fprintf(stderr, "%s is not a directory\n", pathname);
+        free(pathInfo->parent);
+        free(pathInfo);
         return NULL;
     }
 
-    fdDir *fd = malloc(sizeof(fdDir));
+    // We prepare and populate a directory stream object that we’ll use to iterate
+    fdDir* dirStream = malloc(sizeof(fdDir));
+    dirStream->d_reclen = calculateFormula(entry.size, vcb->blockSize);
+    dirStream->dirEntryPosition = entryIndex;
+    dirStream->dirEntryLocation = entry.location;
+    dirStream->index = 0;
 
-    fd->d_reclen = calculateFormula(entry.size, vcb->blockSize);
-    fd->dirEntryPosition = index;
-    fd->dirEntryLocation = entry.location;
-    fd->index = 0;
+    // We also prepare a buffer for storing information about entries we read
+    dirStream->di = malloc(sizeof(struct fs_diriteminfo));
+    dirStream->di->d_reclen = dirStream->d_reclen;
+    dirStream->di->fileType = entry.isDirectory;
+    strcpy(dirStream->di->d_name, entryName);
 
-    // TODO: why tf was this not typedef?? pick one!!11!
-    fd->di = malloc(sizeof(struct fs_diriteminfo));
-    fd->di->d_reclen = calculateFormula(entry.size, vcb->blockSize);
-    fd->di->fileType = entry.isDirectory;
-    strcpy(fd->di->d_name, lastElementName);
-
-    free(ppinfo->parent);
-    free(ppinfo);
-    return fd;
+    // Clean up what we no longer need after setting things up
+    free(pathInfo->parent);
+    free(pathInfo);
+    return dirStream;
 }
 
 
-//----------------------------------------------------------------
-// fs_readdir
-// This function reads the next entry in a directory.
-//-------------------------------------------------------------------
+// We use this to read the next entry in the open directory stream one-by-one.
+struct fs_diriteminfo* fs_readdir(fdDir* dirp) {
+    // We first calculate how many blocks this directory spans
+    int totalBlocks = calculateFormula(sizeof(DE) * DECOUNT, vcb->blockSize);
+    DE* directoryEntries = malloc(totalBlocks * vcb->blockSize);
 
-struct fs_diriteminfo *fs_readdir(fdDir *dirp){
-    int num_blocks = calculateFormula(sizeof(DE) * DECOUNT, vcb->blockSize);
-    struct DE* entries = malloc(num_blocks * vcb->blockSize);
-    int res = fileRead(entries, num_blocks, dirp->dirEntryLocation);
-    struct DE entry = entries[dirp->index];
-
-    if (res == -1) {
-        fprintf(stderr, "Could not load entry\n");
-        free(entries);
+    // Load the directory content from disk into memory
+    int readSuccess = fileRead(directoryEntries, totalBlocks, dirp->dirEntryLocation);
+    if (readSuccess == -1) {
+        fprintf(stderr, "Could not load directory entries\n");
+        free(directoryEntries);
         return NULL;
     }
 
-    // Skip empty entries
-    while (dirp->index < DECOUNT-1 && entry.location == -2l) {
-        entry = entries[++dirp->index];
+    DE currentEntry = directoryEntries[dirp->index];
+
+    // We skip over any unused or deleted entries
+    while (dirp->index < DECOUNT - 1 && currentEntry.location == -2L) {
+        currentEntry = directoryEntries[++dirp->index];
     }
 
-    if (dirp->index == DECOUNT-1) {
-        free(entries);
+    // If we reach the end, return NULL to signal no more entries
+    if (dirp->index == DECOUNT - 1) {
+        free(directoryEntries);
         return NULL;
     }
 
+    // Copy relevant info into our return buffer so the caller can see it
     dirp->di->d_reclen = dirp->d_reclen;
-    dirp->di->fileType = entry.isDirectory;
-    strcpy(dirp->di->d_name, entry.name);
-    dirp->index++;
+    dirp->di->fileType = currentEntry.isDirectory;
+    strcpy(dirp->di->d_name, currentEntry.name);
+    dirp->index++;  // Prepare for the next call
 
-    free(entries);
+    free(directoryEntries);
     return dirp->di;
 }
 
