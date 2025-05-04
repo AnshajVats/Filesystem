@@ -23,7 +23,6 @@
 #include <time.h>
 #include <stdint.h>
 
-#include "b_io.h"
 #include "fsInit.h"
 
 #include <dirent.h>
@@ -38,19 +37,17 @@ typedef u_int64_t uint64_t;
 typedef u_int32_t uint32_t;
 #endif
 
-struct VCB
-{
-	long signature;		   
-	int totalBlocks;	   
-	int blockSize;		  
-	int freeSpaceLocation; 
-	int freeSpaceSize;     
-	int rootLocation;	   
-	int rootSize;		
-	int firstBlock;		   
-	int totalFreeSpace;	   
-};
-typedef struct VCB VCB;
+typedef struct VCB{
+	uint64_t signature;         // Signature to identify the filesystem
+    uint64_t blockSize;         // Size of each block in bytes
+	uint64_t totalBlocks;       // Total number of blocks on disk
+	uint64_t freeSpaceMap;
+	uint64_t freeSpaceSize;     
+	uint64_t rootDir;	   
+	uint64_t rootSize;		
+	uint64_t firstBlock;		   
+	uint64_t totalFreeSpace;	   
+}VCB;
 
 // Specifications for directory entry
 struct DE

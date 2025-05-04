@@ -56,7 +56,7 @@ int initFreespace(uint64_t numberOfBlocks, uint64_t blockSize){
 
     int blocksWritten = LBAwrite(freeSpaceMap, blocksNeeded, 1);
     vcb->totalFreeSpace = numberOfBlocks - blocksNeeded;
-    vcb->freeSpaceLocation = 1;
+    vcb->freeSpaceMap = 1;
     vcb->freeSpaceSize = blocksNeeded;
     return blocksWritten == -1 ? -1: blocksNeeded + 1;
 }
@@ -184,7 +184,6 @@ int createDirectory(int numberOfEntries, DE *parent)
 	 * entries we can actually fit */
 	bytes = sizeof(DE) * numberOfEntries;
 	blockCount = calculateFormula(bytes, MINBLOCKSIZE);
-		// ((bytes + MINBLOCKSIZE - 1) / MINBLOCKSIZE);
 	maxEntryCount = (blockCount * MINBLOCKSIZE) / sizeof(DE);
 
 	// Allocate memory for directory
@@ -222,7 +221,7 @@ int createDirectory(int numberOfEntries, DE *parent)
 	{
 		printf("Initializing root directory\n");
 		vcb->rootSize = blockCount;
-		vcb->rootLocation = blocksRequested;
+		vcb->rootDir = blocksRequested;
 		buffer[1] = buffer[0];
 
 		/* If a parent directory entry is provided, initialize new directory's
@@ -251,33 +250,27 @@ int initFileSystem (uint64_t numberOfBlocks, uint64_t blockSize){
 	root = (DE *) malloc(DE_SIZE);
 	cwdPathName = (char *) malloc(512);
 
-	printf ("Initializing File System with %ld blocks \
-		with a block size of %ld\n", numberOfBlocks, blockSize);
-
 	buffer = (VCB *) malloc(MINBLOCKSIZE);
 	LBAread ( buffer, 1, 0);
 
-	if ( buffer->signature == SIGNATURE ){
-        	LBAread(vcb, 1, 0);
-		printf("Disk already formatted\n");
-		LBAread ( root, vcb->rootSize, vcb->rootLocation );
-		LBAread ( freeSpaceMap, vcb->freeSpaceSize,
-			vcb->freeSpaceLocation);
-	}else{
-		printf("Formatting disk\n");
+	if ( buffer->signature != SIGNATURE ){
+        printf("Formatting disk\n");
 		memset(vcb, 0, MINBLOCKSIZE);
 		vcb -> signature = SIGNATURE;
 		vcb -> totalBlocks = numberOfBlocks;
 		vcb -> blockSize = blockSize;
-		vcb -> firstBlock =
-			initFreespace(numberOfBlocks, MINBLOCKSIZE);
+		vcb -> firstBlock =initFreespace(numberOfBlocks, MINBLOCKSIZE);
 		printf("Free space initialized\n");
-		vcb -> freeSpaceLocation = 1;
-		vcb -> rootLocation =
-			createDirectory(50, NULL);
+		vcb -> freeSpaceMap = 1;
+		vcb -> rootDir =createDirectory(50, NULL);
 		LBAwrite(vcb, 1, 0);
+		LBAread ( root, vcb->rootSize, vcb->rootDir );
+	}else{
+        LBAread(vcb, 1, 0);
+		printf("Disk already formatted\n");
+		LBAread ( root, vcb->rootSize, vcb->rootDir );
+		LBAread ( freeSpaceMap, vcb->freeSpaceSize, vcb->freeSpaceMap);
 
-		LBAread ( root, vcb->rootSize, vcb->rootLocation );
 	}
 	fs_setcwd("/");
 	strncpy(cwdPathName, "/", 36);
@@ -291,7 +284,7 @@ void exitFileSystem (){
 	fileWrite(vcb, 1, 0);
 	fileWrite(freeSpaceMap,
 		MINBLOCKSIZE * vcb -> freeSpaceSize,
-		vcb -> freeSpaceLocation);
+		vcb -> freeSpaceMap);
     free(freeSpaceMap);
     free(vcb);
     free(root);

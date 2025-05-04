@@ -1,9 +1,9 @@
 /**************************************************************
 * Class::  CSC-415-0# Spring 2024
-* Name:: Karina Alvarado Mendoza
-* Student IDs:: 921299233
-* GitHub-Name:: Karina-Krystal
-* Group-Name:: Horse
+* Name::
+* Student IDs::
+* GitHub-Name::
+* Group-Name::
 * Project:: Basic File System
 *
 * File:: b_io.c
@@ -20,18 +20,15 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include "b_io.h"
-#include <path.h>
+
+#include "path.h"
 #include "fsInit.h"
 #include "mfs.h"
-#define PATH_NO_VALUE_LEFT -2
+#include "fsLow.h"
 
 
-#define MAXFCBS 20
-#define B_CHUNK_SIZE 512
-
-
-
-int startup = 0;	//Indicates that this has not been initialized
+b_fcb fcbArray[MAXFCBS]; 
+int startup = 0;  
 
 //Method to initialize our file system
 void b_init ()
@@ -58,71 +55,61 @@ b_io_fd b_getFCB ()
 	return (-1);  //all in use
 	}
 	
+
 // Interface to open a buffered file
 // Modification of interface for this assignment, flags match the Linux flags for open
 // O_RDONLY, O_WRONLY, or O_RDWR
-b_io_fd b_open (char * filename, int flags)
-	{
-	//validate the access mode
-	if ((flags & O_ACCMODE) == O_ACCMODE)
-	{
-		return -1;
-	}	
-	//int parsepath(char * pathname, parsepathInfo * ppI) {
-	parsepathInfo* pathInfo = (parsepathInfo*)malloc(sizeof(parsepathInfo));
-    if (!pathInfo || parsepath(filename, pathInfo) != 0 || pathInfo->lastElement == PATH_NO_VALUE_LEFT)
-    {
-        free(pathInfo);
+b_io_fd b_open(char *filename, int flags) {
+    b_io_fd returnFd = -1;
+    PPRETDATA *ppinfo = NULL;
+    DE *fileInfo = NULL;
+    b_fcb *fcb = NULL;
+
+    // Initialize system and get FCB
+    if ((returnFd = initializeFCB()) < 0) {
+        return returnFd;
+    }
+    fcb = &fcbArray[returnFd];
+
+    // Parse file path and retrieve directory info
+    if (!(ppinfo = parseFilePath(filename, &fileInfo))) {
+        fprintf(stderr, "Error parsing path\n");
+        cleanupResources(NULL, NULL, fcb);
         return -1;
     }
 
-    if (pathInfo->lastElement == -1)
-    {
-        if ((flags & O_CREAT) != O_CREAT || createFile(pathInfo) == -1)
-        {
-            freeParsedpathInfo(pathInfo);
-            free(pathInfo);
-            return -1;
-        }
-        pathInfo->lastElement = LocateEntry(pathInfo->parent);
+    // Determine and handle the open mode
+    int modeHandled = 0;
+    if ((flags & O_RDONLY) && ppinfo->lastElementIndex >= 0) {
+        modeHandled = handleReadMode(returnFd, ppinfo);
+    } else if (ppinfo->lastElementIndex >= 0) {
+        modeHandled = handleWriteMode(returnFd, ppinfo, flags);
+    } else if (flags & O_CREAT) {
+        modeHandled = handleCreateMode(returnFd, ppinfo);
     }
-    //checking if the index we are currently in is a directory
-    if (isDir(&pathInfo->parent[pathInfo->index]))
-    {
-        freeParsedpathInfo(pathInfo);
-        free(pathInfo);
+
+    if (!modeHandled) {
+        cleanupResources(ppinfo, fileInfo, fcb);
         return -1;
     }
 
-    if ((flags & O_TRUNC) == O_TRUNC && truncatedOfFile(pathInfo) == -1)
-    {
-        freeParsedpathInfo(pathInfo);
-        free(pathInfo);
+    // Setup common FCB fields and copy parent directory data
+    DE *parentCopy = malloc(DE_SIZE);
+    if (!parentCopy) {
+        cleanupResources(ppinfo, fileInfo, fcb);
         return -1;
     }
+    memcpy(parentCopy, ppinfo->parent, DE_SIZE);
+    setupCommonFCBFields(returnFd, parentCopy, flags);
 
-    if (startup == 0)
-        b_init();
+    // Update parent directory on disk
+    updateParentDirectory(returnFd);
 
-    b_io_fd returnFd = b_getFCB();
-    if (returnFd == -1)
-    {
-        freeParsedpathInfo(pathInfo);
-        free(pathInfo);
-        return -1;
-    }
+    // Cleanup parsed resources
+    cleanupResources(ppinfo, fileInfo, NULL);
 
-    fcbArray[returnFd].buf = (char*)malloc(B_CHUNK_SIZE);
-    if (!fcbArray[returnFd].buf)
-    {
-        freeParsedpathInfo(pathInfo);
-        free(pathInfo);
-        return -1;
-    }
-
-	b_io_fd returnFd;
-	}
-
+    return returnFd;
+}
 
 // Interface to seek function	
 int b_seek (b_io_fd fd, off_t offset, int whence)
@@ -191,42 +178,8 @@ int b_read (b_io_fd fd, char * buffer, int count)
 	return (0);	//Change this
 	}
 	
-// Interface to Close the file
-int b_close(b_io_fd fd)
-{
-    // Validate the file descriptor
-    if (fd < 0 || fd >= MAXFCBS || fcbArray[fd].buf == NULL)
-    {
-        return -1;
-    }
+// Interface to Close the file	
+int b_close (b_io_fd fd)
+	{
 
-    b_fcb* fcb = &fcbArray[fd];
-
-    // Write back dirty data if the file is not read-only
-    if ((fcb->flags & O_ACCMODE) != O_RDONLY)
-    {
-        flushBuffer(fcb);
-
-        // Handle empty file cleanup
-        if (fcb->fileEntry->size == 0 && fcb->fileEntry->startBlock > 0)
-        {
-            freeBlocks(fcb->fileEntry->startBlock);
-        }
-        else
-        {
-            changeBlocksAllocate(fcb->fileEntry->startBlock,
-                                 sizeToBlocks(fcb->fileEntry->size, B_CHUNK_SIZE));
-        }
-    }
-
-    // Free resources associated with the file
-    freeParsedpathInfo(fcb->pathInfo);
-    free(fcb->pathInfo);
-    fcb->pathInfo = NULL;
-    fcb->fileEntry = NULL;
-
-    free(fcb->buf);
-    fcb->buf = NULL;
-
-    return 0;
-}
+	}

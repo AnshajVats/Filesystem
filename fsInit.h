@@ -21,9 +21,10 @@ extern struct DE *root;
 extern struct DE *cwd;
 extern char * cwdPathName;
 extern int *fat;
-int createDirectory(int numberOfEntries, struct DE *parent); // struct DE not DE cause it is imported in mfs.h so doesn't know DE
+int createDirectory(int numberOfEntries, struct DE *parent); 
 int fileRead(void* buff, int numberOfBlocks, int location);
 int fileWrite(void* buff, int numberOfBlocks, int location);
 int returnFreeBlocks(int location);
+int fileSeek(int location, int numberOfBlocks);
 
 #endif

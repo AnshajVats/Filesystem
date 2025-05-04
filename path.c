@@ -21,6 +21,7 @@
 #include "mfs.h"
 #include "fsLow.h"
 #include "fsInit.h"
+#include "b_io.h"
 
 #define B_CHUNK_SIZE 512 // block size in bytes
 
@@ -163,4 +164,126 @@ int find_vacant_space(DE * directory, char * fileName){
     }
     
     return firstVacant;
+}
+
+
+    // Initializes system and allocates FCB resources
+b_io_fd initializeFCB() {
+    if (startup == 0) b_init();
+    b_io_fd fd = b_getFCB();
+    if (fd == -2) {
+        fprintf(stderr, "Error getting FCB\n");
+        return -1;
+    }
+
+    b_fcb *fcb = &fcbArray[fd];
+    fcb->fileInfo = malloc(sizeof(DE));
+    fcb->buf = malloc(B_CHUNK_SIZE);
+    if (!fcb->fileInfo || !fcb->buf) {
+        free(fcb->fileInfo);
+        free(fcb->buf);
+        return -1;
+    }
+    return fd;
+}
+
+// Parses the file path and retrieves directory information
+PPRETDATA* parseFilePath(char *filename, DE **fileInfo) {
+    PPRETDATA *ppinfo = malloc(sizeof(PPRETDATA));
+    if (!ppinfo) return NULL;
+    ppinfo->parent = malloc(DE_SIZE);
+    *fileInfo = malloc(MINBLOCKSIZE);
+    if (!ppinfo->parent || !*fileInfo) {
+        free(ppinfo);
+        free(*fileInfo);
+        return NULL;
+    }
+    memset(*fileInfo, 0, MINBLOCKSIZE);
+
+    if (parsePath(filename, ppinfo) == -1) {
+        free(ppinfo->parent);
+        free(ppinfo);
+        free(*fileInfo);
+        return NULL;
+    }
+    return ppinfo;
+}
+
+// Handles opening a file for reading
+int handleReadMode(b_io_fd fd, PPRETDATA *ppinfo) {
+    b_fcb *fcb = &fcbArray[fd];
+    DE *file = &ppinfo->parent[ppinfo->lastElementIndex];
+    memcpy(fcb->fileInfo, file, sizeof(DE));
+    fcb->remainingBytes = file->size;
+    fcb->index = 0;
+    fcb->fileIndex = ppinfo->lastElementIndex;
+    fcb->numBlocks = 0;
+    return 1;
+}
+
+// Handles opening a file for writing (existing file)
+int handleWriteMode(b_io_fd fd, PPRETDATA *ppinfo, int flags) {
+    b_fcb *fcb = &fcbArray[fd];
+    DE *file = &ppinfo->parent[ppinfo->lastElementIndex];
+    memcpy(fcb->fileInfo, file, sizeof(DE));
+    fcb->remainingBytes = file->size;
+    fcb->currentBlock = file->location;
+    fcb->fileIndex = ppinfo->lastElementIndex;
+    fcb->numBlocks = calculateFormula(file->size, MINBLOCKSIZE);
+
+    if (flags & O_TRUNC) {
+        fcb->currentBlock = fileSeek(fcb->currentBlock, fcb->numBlocks);
+        fcb->index = file->size % B_CHUNK_SIZE;
+        fileRead(fcb->buf, 1, fcb->currentBlock);
+    }
+    return 1;
+}
+
+// Handles creating a new file
+int handleCreateMode(b_io_fd fd, PPRETDATA *ppinfo) {
+    b_fcb *fcb = &fcbArray[fd];
+    time_t currTime = time(NULL);
+    fcb->fileInfo->name[DE_NAME_SIZE - 1] = '\0';
+    strncpy(fcb->fileInfo->name, ppinfo->lastElementName, DE_NAME_SIZE - 1);
+    fcb->fileInfo->size = 0;
+    fcb->fileInfo->location = -1; // To be allocated later
+    fcb->fileInfo->dateCreated = currTime;
+    fcb->fileInfo->dateModified = currTime;
+    fcb->fileInfo->dateLastAccessed = currTime;
+    fcb->fileInfo->isDirectory = 0;
+    fcb->remainingBytes = 0;
+    fcb->index = 0;
+    fcb->numBlocks = 0;
+    fcb->fileIndex = find_vacant_space(ppinfo->parent, fcb->fileInfo->name);
+    return fcb->fileIndex >= 0 ? 1 : 0;
+}
+
+// Sets common fields for the FCB
+void setupCommonFCBFields(b_io_fd fd, DE *parent, int flags) {
+    b_fcb *fcb = &fcbArray[fd];
+    fcb->parent = parent;
+    fcb->buflen = B_CHUNK_SIZE;
+    fcb->activeFlags = flags;
+}
+
+// Writes the updated parent directory back to disk
+void updateParentDirectory(b_io_fd fd) {
+    b_fcb *fcb = &fcbArray[fd];
+    int parentBlocks = calculateFormula(DE_SIZE, MINBLOCKSIZE);
+    fcb->parent[fcb->fileIndex] = *fcb->fileInfo;
+    fileWrite(fcb->parent, parentBlocks, fcb->parent[0].location);
+}
+
+// Frees allocated resources during error handling
+void cleanupResources(PPRETDATA *ppinfo, DE *fileInfo, b_fcb *fcb) {
+    if (ppinfo) {
+        free(ppinfo->parent);
+        free(ppinfo);
+    }
+    free(fileInfo);
+    if (fcb) {
+        free(fcb->fileInfo);
+        free(fcb->buf);
+        free(fcb->parent);
+    }
 }
