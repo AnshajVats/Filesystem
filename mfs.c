@@ -26,6 +26,7 @@
 
 int returnFreeBlocks(long location);
 char* cleanPath(char* pathname);
+struct VCB *volumeControlBlock;
 
 //----------------------------------------------------------------
 // fs_mkdir - Creates a new directory at the specified path
@@ -142,7 +143,23 @@ int fs_isFile(char *filename) {
     return isFile;
 }
 
-int fs_stat(const char *pathname, struct fs_stat *buf) {
+int fs_stat(const char *path, struct fs_stat *buf) {
+    PPRETDATA *ppinfo;
+
+    if (parsePath((char *)path, &ppinfo) != 0) return -1;
+
+    DE *entry = &ppinfo->parent[ppinfo->lastElementIndex];
+
+    buf->st_size = entry->size;
+    buf->st_blksize = volumeControlBlock->blockSize;
+    buf->st_blocks = (entry->size + volumeControlBlock->blockSize -1)
+                            / volumeControlBlock->blockSize;
+    buf->st_createtime = entry->dateCreated;
+    buf->st_modtime = entry->dateModified;
+    buf->st_accesstime = entry->dateLastAccessed;
+
+    free(ppinfo->parent);
+    free(ppinfo);
     return 0;
 }
 
