@@ -16,7 +16,7 @@
  * @param
  * @return
  */
-extern struct VCB *volumeControlBlock;
+extern struct VCB *vcb;
 extern struct DE *root;
 extern struct DE *cwd;
 extern char * cwdPathName;

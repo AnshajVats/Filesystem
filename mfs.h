@@ -88,13 +88,16 @@ struct fs_diriteminfo
 // from a directory.  This structure helps you (the file system) keep track of
 // which directory entry you are currently processing so that everytime the caller
 // calls the function readdir, you give the next entry in the directory
-typedef struct {
-    int d_reclen;
-    int dirEntryPosition;
-    long directoryStartLocation;
-    DE* dir;
-} fdDir;
-
+typedef struct
+	{
+	/*****TO DO:  Fill in this structure with what your open/read directory needs  *****/
+	unsigned short  d_reclen;			/* length of this record */
+	unsigned short	dirEntryPosition;	/* which directory entry position, like file pos */
+	unsigned long 	dirEntryLocation;	/* location of the first DE*/
+	unsigned int index;					/* index of the current entry */
+	struct DE *	directory;				/* Pointer to the loaded directory you want to iterate */
+	struct fs_diriteminfo * di;			/* Pointer to the structure you return from read */
+	} fdDir;
 
 
 // Key directory functions
@@ -113,6 +116,7 @@ int fs_isFile(char * filename);	//return 1 if file, 0 otherwise
 int fs_isDir(char * pathname);		//return 1 if directory, 0 otherwise
 int fs_delete(char* filename);	//removes a file
 int calculateFormula(int i, int j);
+char* getLastElement(char* path);
 
 
 // This is the strucutre that is filled in from a call to fs_stat
