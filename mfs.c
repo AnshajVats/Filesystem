@@ -368,50 +368,55 @@ struct fs_diriteminfo* fs_readdir(fdDir* dirp) {
     return dirp->di;
 }
 
-//--------------------------------------------------------------
-// fs_stat
-// This function retrieves information about a file or directory.
-//--------------------------------------------------------------
+/* ====== File & Directory Info Functions (fs_stat, fs_closedir) ====== */
 
-int fs_stat(const char *pathname, struct fs_stat *buf) {
-    PPRETDATA *ppinfo = malloc(sizeof(PPRETDATA));
-    ppinfo->parent = malloc(DE_SIZE); // TODO: why not malloc in pp?
-    int res = parsePath(pathname, ppinfo);
+// We use this when we want to fetch metadata about a file or folder like size, timestamps, etc.
+int fs_stat(const char* pathname, struct fs_stat* buf) {
+    // Break path into parent + last element structure
+    PPRETDATA* pathInfo = malloc(sizeof(PPRETDATA));
+    pathInfo->parent = malloc(DE_SIZE);
 
-    if (res == -1) {
+    // Parse path and make sure it exists
+    if (parsePath(pathname, pathInfo) == -1) {
+        free(pathInfo->parent);
+        free(pathInfo);
         return -1;
     }
 
-    char* lastElementName = getLastElement(pathname);
-    int index = findInDir(ppinfo->parent, lastElementName);
+    // Get last component name and its index
+    char* targetName = getLastElement(pathname);
+    int index = findInDir(pathInfo->parent, targetName);
+
     if (index == -1) {
+        free(pathInfo->parent);
+        free(pathInfo);
         return -1;
     }
 
-    struct DE entry = ppinfo->parent[index];
-    buf->st_size = entry.size;
+    // Fill out the stat structure with metadata
+    DE target = pathInfo->parent[index];
+    buf->st_size = target.size;
     buf->st_blksize = vcb->blockSize;
-    buf->st_blocks = calculateFormula(entry.size, vcb->blockSize);
-    buf->st_accesstime = entry.dateLastAccessed;
-    buf->st_modtime = entry.dateModified;
-    buf->st_createtime = entry.dateLastAccessed;
+    buf->st_blocks = calculateFormula(target.size, vcb->blockSize);
+    buf->st_accesstime = target.dateLastAccessed;
+    buf->st_modtime = target.dateModified;
+    buf->st_createtime = target.dateCreated;
 
+    // Clean up
+    free(pathInfo->parent);
+    free(pathInfo);
     return index;
 }
 
 
-//--------------------------------------------------------------
-// fs_closedir
-// This function closes a directory stream.
-//--------------------------------------------------------------
-
-int fs_closedir(fdDir *dirp) {
-
-    if (dirp == NULL) {
-        fprintf(stderr, "Cannot close directory, is null\n");
+// When we’re done reading through a directory, we use this to close it and free memory
+int fs_closedir(fdDir* dirp) {
+    if (!dirp) {
+        fprintf(stderr, "Cannot close directory — pointer is NULL\n");
         return 0;
     }
 
+    // Clean up memory used for the directory stream
     free(dirp);
     return 1;
 }
