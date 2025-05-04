@@ -37,6 +37,13 @@ typedef u_int64_t uint64_t;
 typedef u_int32_t uint32_t;
 #endif
 
+
+typedef struct {
+    int bytesNeeded;
+    int blockCount;
+    int maxEntryCount;
+} DirectorySizeInfo;
+
 typedef struct VCB{
 	uint64_t signature;         // Signature to identify the filesystem
     uint64_t blockSize;         // Size of each block in bytes

@@ -24,61 +24,101 @@
 #include "fsInit.h"
 
 
+/* ---------------------- */
+/* Common Helper Functions */
+/* ---------------------- */
+
+// Error-checked memory allocation
+void* safe_malloc(size_t size) {
+    void* ptr = malloc(size);
+    if (!ptr) {
+        perror("malloc failed");
+        exit(EXIT_FAILURE);
+    }
+    return ptr;
+}
+
+// Generic path parsing helper
+PPRETDATA* parse_path(const char* path) {
+    PPRETDATA* ppinfo = safe_malloc(sizeof(PPRETDATA));
+    ppinfo->parent = safe_malloc(DE_SIZE);
+    
+    if (parsePath(path, ppinfo) == -1) {
+        free(ppinfo->parent);
+        free(ppinfo);
+        return NULL;
+    }
+    return ppinfo;
+}
+
+// Common directory entry operations
+int find_and_validate_slot(DE* parent, const char* name, int require_empty) {
+    int index = find_vacant_space(parent, (char*)name);
+    if (index == -1) {
+        fprintf(stderr, "No available slot in directory\n");
+        return -1;
+    }
+    
+    if (!require_empty) {
+        DE* existing = &parent[index];
+        if (existing->location != -2 && returnFreeBlocks(existing->location) == -1) {
+            return -1;
+        }
+    }
+    return index;
+}
+
+// Common directory initialization
+int initialize_directory_entry(DE* entry, const char* name, int is_dir, int location) {
+    memset(entry, 0, sizeof(DE));
+    entry->location = location;
+    entry->isDirectory = is_dir;
+    strncpy(entry->name, name, DE_NAME_SIZE);
+    
+    time_t now = time(NULL);
+    entry->dateCreated = now;
+    entry->dateModified = now;
+    entry->dateLastAccessed = now;
+    return 0;
+}
+
+// Common write-back operation
+int write_parent_directory(DE* parent) {
+    int size = calculateFormula(parent->size, MINBLOCKSIZE);
+    return fileWrite(parent, size, parent->location);
+}
+
+
 //----------------------------------------------------------------
 // fsmkdir
 // This function creates a new directory at the specified path.
 //-------------------------------------------------------------------
-int fs_mkdir (const char *pathname, mode_t mode){
-	int ret;				// Used for error handling
-	int emptyIndex;				// Track first unused entry in parent
-	char * directoryName;			// Name of new directory
-	PPRETDATA *parsepathinfo;	// Structure returned from parse path
-	DE * parent;			// Track parent directory entry
-	DE * newDirectory;		// Used for new directory entry
+int fs_mkdir(const char *pathname, mode_t mode) {
+    // Path parsing
+    PPRETDATA* ppinfo = parse_path(pathname);
+    if (!ppinfo) return -1;
 
-	parsepathinfo = malloc(sizeof(PPRETDATA));
-	parsepathinfo->parent = malloc(DE_SIZE);
-	newDirectory = malloc(MINBLOCKSIZE);
-	if ( !parsepathinfo || !newDirectory ){
-		perror("malloc");
-		return -1;
-	}
+    // Slot finding
+    int slot = find_and_validate_slot(ppinfo->parent, ppinfo->lastElementName, 1);
+    if (slot == -1) goto cleanup;
 
-	if( parsePath(pathname, parsepathinfo) == -1 ) {
-        fprintf(stderr, "invalid path\n");
-        return -1;
-    }
-	// Read all relevant data from parsepath needed for directory creation
-	parent = parsepathinfo -> parent;
-	directoryName = parsepathinfo->lastElementName;
-	emptyIndex = find_vacant_space ( parent , directoryName);
-	if ( emptyIndex == -1){
-		fprintf(stderr, "error in Find Vacant Space\n");
-		return -1;
-	}
+    // Directory creation
+    int dir_location = createDirectory(DEFAULTDIRSIZE, ppinfo->parent);
+    if (dir_location == -1) goto cleanup;
 
-	// Create and link new directory to an empty position in parent array
-	ret = createDirectory(DEFAULTDIRSIZE, parent);
-	if ( ret == -1 ){
-		fprintf(stderr, "error in Create Directory\n");
-		return -1;
-	}
-	memset(newDirectory, 0, MINBLOCKSIZE);
-	ret = fileRead(newDirectory, 1, ret);
-	if ( ret == -1){
-		fprintf(stderr, "error in File Read\n");
-		return -1;
-	}
-	parent[emptyIndex] = newDirectory[0];
-	strncpy(parent[emptyIndex].name, directoryName, DE_NAME_SIZE);
+    // Entry initialization
+    DE new_entry;
+    initialize_directory_entry(&new_entry, ppinfo->lastElementName, 1, dir_location);
+    
+    // Update parent
+    ppinfo->parent[slot] = new_entry;
+    int result = write_parent_directory(ppinfo->parent);
 
-	// Write changes back to parent directory to complete linking
-    int size = calculateFormula(parent->size, MINBLOCKSIZE);
-	fileWrite(parent, size, parent->location);
-
-	return 0;
+cleanup:
+    free(ppinfo->parent);
+    free(ppinfo);
+    return result;
 }
-
 
 //----------------------------------------------------------------
 // fs_setcwd
@@ -355,111 +395,46 @@ int fs_isFile(char * filename){
 // fs_rmdir
 // This function removes a directory at the specified path.
 //-----------------------------------------------------------------
-int isEmpty(struct DE* dir) {
-    printf("DEBUG: Checking if directory is empty\n");
-    for (int i = 2; i < DECOUNT; i++) {
-        printf("DEBUG: Entry %d location: %ld\n", i, (long)dir[i].location);
-        if (dir[i].location > 0) {
-            printf("DEBUG: Directory not empty, found entry at index %d\n", i);
-            return 0;
-        }
+int isEmpty(DE* dir) {
+    if (!dir) return 0;
+    
+    // Use actual directory size instead of DECOUNT
+    int entry_count = dir[0].size / sizeof(DE);
+    for (int i = 2; i < entry_count; i++) {
+        if (dir[i].location > 0) return 0;
     }
-    printf("DEBUG: Directory is empty\n");
     return 1;
 }
 
-
 int fs_rmdir(const char *pathname) {
-    PPRETDATA *ppinfo = malloc(sizeof(PPRETDATA));
-    ppinfo->parent = malloc(DE_SIZE);
-    printf("DEBUG: fs_rmdir called with pathname: %s\n", pathname);
+    PPRETDATA *ppinfo = NULL;
+    DE *currDir = NULL;
+    int result = -1;
+
+    if (!(ppinfo = parse_path(pathname))) goto cleanup;
+    if (ppinfo->lastElementIndex < 0) goto cleanup;
+
+    DE* entry = &ppinfo->parent[ppinfo->lastElementIndex];
+    if (!entry->isDirectory) goto cleanup;
+
+    if (!(currDir = loadDir(entry, 0))) goto cleanup;
+    if (!isEmpty(currDir)) {
+        printf("Error: Directory not empty '%s'\n", pathname);
+        goto cleanup;
+    }
+
+    if (returnFreeBlocks(entry->location) == -1) goto cleanup;
     
-    int res = parsePath(pathname, ppinfo);
-    printf("DEBUG: parsePath returned %d\n", res);
-    
-    int index = ppinfo->lastElementIndex;
-    if (res == -1 || index <= -1) {
-        printf("DEBUG: Invalid path or index\n");
+    entry->location = -2;
+    result = write_parent_directory(ppinfo->parent);
+
+cleanup:
+    if (currDir) free(currDir);
+    if (ppinfo) {
         free(ppinfo->parent);
         free(ppinfo);
-        return -1;
     }
-    
-    printf("DEBUG: Entry isDirectory: %d\n", ppinfo->parent[index].isDirectory);
-    
-    // Check if this is a file or directory
-    if (!ppinfo->parent[index].isDirectory) {
-        printf("DEBUG: Target is a file, handling as file deletion\n");
-        
-        // Free the blocks allocated to the file
-        if (ppinfo->parent[index].size > 0) {
-            int result = returnFreeBlocks(ppinfo->parent[index].location);
-            printf("DEBUG: returnFreeBlocks returned %d\n", result);
-            if (result == -1) {
-                free(ppinfo->parent);
-                free(ppinfo);
-                return -1;
-            }
-        }
-        
-        // Mark file entry as unused
-        ppinfo->parent[index].location = -2;
-        printf("DEBUG: Marked file entry %d in parent directory as unused\n", index);
-        
-        // Write updated parent directory back to disk
-        int size = calculateFormula(ppinfo->parent->size, vcb->blockSize);
-        int location = ppinfo->parent->location;
-        int writeResult = fileWrite(ppinfo->parent, size, location);
-        printf("DEBUG: fileWrite returned %d (expected size: %d)\n", writeResult, size);
-        
-        free(ppinfo->parent);
-        free(ppinfo);
-        return 0;
-    }
-    
-    // If we get here, it's a directory
-    printf("DEBUG: Target is a directory\n");
-    struct DE* currDir = loadDir(ppinfo->parent, index);
-    if (!currDir) {
-        printf("DEBUG: Failed to load directory\n");
-        free(ppinfo->parent);
-        free(ppinfo);
-        return -1;
-    }
-    
-    // Check if directory is empty
-    if (isEmpty(currDir) == 0) {
-        printf("DEBUG: Directory is not empty\n");
-        free(currDir);
-        free(ppinfo->parent);
-        free(ppinfo);
-        return -1;
-    }
-    
-    // Free the blocks allocated to the directory
-    int result = returnFreeBlocks(ppinfo->parent[index].location);
-    printf("DEBUG: returnFreeBlocks returned %d\n", result);
-    if (result == -1) {
-        free(currDir);
-        free(ppinfo->parent);
-        free(ppinfo);
-        return -1;
-    }
-    
-    // Mark directory entry as unused
-    ppinfo->parent[index].location = -2;
-    printf("DEBUG: Marked directory entry %d in parent directory as unused\n", index);
-    
-    // Write updated parent directory back to disk
-    int size = calculateFormula(ppinfo->parent->size, vcb->blockSize);
-    int location = ppinfo->parent->location;
-    int writeResult = fileWrite(ppinfo->parent, size, location);
-    printf("DEBUG: fileWrite returned %d (expected size: %d)\n", writeResult, size);
-    
-    free(currDir);
-    free(ppinfo->parent);
-    free(ppinfo);
-    return 0;
+    return result;
 }
 
 //----------------------------------------------------------------
@@ -467,59 +442,28 @@ int fs_rmdir(const char *pathname) {
 // This function deletes a file at the specified path.
 //-------------------------------------------------------------------
 int fs_delete(char* filename) {
-    PPRETDATA *ppinfo = malloc(sizeof(PPRETDATA));
-    if (!ppinfo) {
-        return -1;  // Memory allocation failed
+    PPRETDATA* ppinfo = parse_path(filename);
+    if (!ppinfo || ppinfo->lastElementIndex < 0) return -1;
+
+    DE* entry = &ppinfo->parent[ppinfo->lastElementIndex];
+    
+    // Validate file
+    if (entry->isDirectory) {
+        fprintf(stderr, "Cannot delete directory with fs_delete\n");
+        goto cleanup;
     }
-    
-    ppinfo->parent = malloc(DE_SIZE);
-    if (!ppinfo->parent) {
-        free(ppinfo);
-        return -1;  // Memory allocation failed
-    }
-    
-    int res = parsePath(filename, ppinfo);
-    int index = ppinfo->lastElementIndex;
-    
-    if (res == -1 || index == -1) {
-        free(ppinfo->parent);
-        free(ppinfo);
-        return -1;
-    }
-    
-    // Check if it's a directory - we shouldn't delete directories with rm
-    if (ppinfo->parent[index].isDirectory) {
-        free(ppinfo->parent);
-        free(ppinfo);
-        return -1;
-    }
-    
-    // Return the blocks allocated to this file to the free space map
-    if (ppinfo->parent[index].size > 0 && ppinfo->parent[index].location >= 0) {
-        if (returnFreeBlocks(ppinfo->parent[index].location) == -1) {
-            free(ppinfo->parent);
-            free(ppinfo);
-            return -1;
-        }
-    }
-    
-    // Mark the directory entry as unused
-    ppinfo->parent[index].location = -2;
-    
-    // Add debugging to verify the entry was marked as unused
-    printf("DEBUG: Marked entry %d in parent directory as unused (location=%ld)\n", 
-           index, (long)ppinfo->parent[index].location);
-    
-    // Write the updated parent directory back to disk
-    int dirSize = calculateFormula(ppinfo->parent[0].size, MINBLOCKSIZE);
-    int writeResult = fileWrite(ppinfo->parent, dirSize, ppinfo->parent[0].location);
-    
-    // Add debugging to verify the write
-    printf("DEBUG: fileWrite returned %d (expected %d)\n", writeResult, dirSize);
-    
+
+    // Free resources
+    if (entry->size > 0 && returnFreeBlocks(entry->location) == -1) goto cleanup;
+    entry->location = -2;
+
+    // Write changes
+    int result = write_parent_directory(ppinfo->parent);
+
+cleanup:
     free(ppinfo->parent);
     free(ppinfo);
-    return 0;
+    return result;
 }
 
 // ----------------------------------------------------------------

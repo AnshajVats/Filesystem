@@ -173,72 +173,85 @@ int fileSeek(int location, int numberOfBlocks){
     return location;
 }
 
-int createDirectory(int numberOfEntries, DE *parent)
-{
-	int bytes;		// The number of bytes needed for entries
-	int blockCount;		// The total number of blocks needed
-	int maxEntryCount;	// How many entries we can fit into our blocks
-	int blocksRequested; 	// Location of first block for new directory
+DirectorySizeInfo calculateDirectorySize(int numberOfEntries) {
+    DirectorySizeInfo info;
+    info.bytesNeeded = sizeof(DE) * numberOfEntries;
+    info.blockCount = calculateFormula(info.bytesNeeded, MINBLOCKSIZE);
+    info.maxEntryCount = (info.blockCount * MINBLOCKSIZE) / sizeof(DE);
+    return info;
+}
 
-	/* From # of entries argument determine the maximum number of
-	 * entries we can actually fit */
-	bytes = sizeof(DE) * numberOfEntries;
-	blockCount = calculateFormula(bytes, MINBLOCKSIZE);
-	maxEntryCount = (blockCount * MINBLOCKSIZE) / sizeof(DE);
+DE* createDirectoryBuffer(int blockCount, int maxEntries) {
+    DE* buffer = malloc(blockCount * MINBLOCKSIZE);
+    if (!buffer) {
+        perror("Directory buffer allocation failed");
+        exit(EXIT_FAILURE);
+    }
+    memset(buffer, 0, blockCount * MINBLOCKSIZE);
+    
+    // Initialize entries to unused state
+    for (int i = 0; i < maxEntries; i++) {
+        buffer[i].location = -2;
+    }
+    return buffer;
+}
 
-	// Allocate memory for directory
-	DE *buffer = malloc(blockCount * MINBLOCKSIZE);
-	memset(buffer, 0, blockCount *  MINBLOCKSIZE);
-	if (buffer == NULL)
-	{
-		printf("Error: Could not allocate memory for new directory\n");
-		exit(EXIT_FAILURE);
-	}
+void initializeCurrentDirEntry(DE* entry, int blockLocation, int dirSize) {
+    entry->location = blockLocation;
+    entry->size = dirSize;
+    entry->isDirectory = 1;
+    strncpy(entry->name, ".", DE_NAME_SIZE);
+    
+    time_t now = time(NULL);
+    entry->dateCreated = now;
+    entry->dateModified = now;
+    entry->dateLastAccessed = now;
+}
 
-	// Initialize each directory entry in new directory to an unused state
-	for (int i = 0; i < maxEntryCount; i++)
-		buffer[i].location = -2;
+void initializeParentDirEntry(DE* entry, const DE* parent) {
+    strncpy(entry->name, "..", DE_NAME_SIZE);
+    entry->isDirectory = 1;
+    
+    if (parent) {
+        entry->location = parent->location;
+        entry->size = parent->size;
+    }
+}
 
-	// Request blocks from freespace system
-	blocksRequested = allocateblock(blockCount);
-	// printf("Creating Directory at %d, with size %ld bytes\n", blocksRequested, maxEntryCount * sizeof(DE));
+void handleRootDirectory(VCB* vcb, DE* buffer, int blockCount, int blockLocation) {
+    printf("Initializing root directory\n");
+    vcb->rootSize = blockCount;
+    vcb->rootDir = blockLocation;
+    buffer[1] = buffer[0];  // Copy . entry to .. for root
+}
 
-	// Initialize dot and dot dot entries of the new directory
-	buffer[0].location = blocksRequested;
-	buffer[0].size = maxEntryCount * sizeof(DE);
-	buffer[0].isDirectory = 1;
-	strncpy(buffer[0].name, ".", DE_NAME_SIZE);
+// Main function
+int createDirectory(int numberOfEntries, DE* parent) {
+    // Calculate size requirements
+    DirectorySizeInfo sizeInfo = calculateDirectorySize(numberOfEntries);
+    
+    // Allocate memory buffer
+    DE* dirBuffer = createDirectoryBuffer(sizeInfo.blockCount, sizeInfo.maxEntryCount);
+    
+    // Get block allocation
+    int blocksRequested = allocateblock(sizeInfo.blockCount);
+    
+    // Initialize directory entries
+    initializeCurrentDirEntry(&dirBuffer[0], blocksRequested, 
+                            sizeInfo.maxEntryCount * sizeof(DE));
+    
+    if (parent) {
+        initializeParentDirEntry(&dirBuffer[1], parent);
+    } else {
+        handleRootDirectory(vcb, dirBuffer, sizeInfo.blockCount, blocksRequested);
+    }
 
-	// Set timestamp fields
-	time_t tm = time(NULL);
-	buffer[0].dateCreated = tm;
-	buffer[0].dateModified = tm;
-	buffer[0].dateLastAccessed = tm;
-
-	// If no parent is passed, initialize root directory 
-	// Cannot handle if root already exists
-	if (parent == NULL)
-	{
-		printf("Initializing root directory\n");
-		vcb->rootSize = blockCount;
-		vcb->rootDir = blocksRequested;
-		buffer[1] = buffer[0];
-
-		/* If a parent directory entry is provided, initialize new directory's
-		 * parent and link the new directory entry back to the parent */
-	}
-	else
-	{
-		buffer[1].location = parent -> location;
-		buffer[1].size = parent -> size;
-	}
-	strncpy(buffer[1].name, "..", DE_NAME_SIZE);
-	buffer[1].isDirectory = 1;
-
-	// Write newly created directory to disk
-	int blocksWritten = fileWrite(buffer, blockCount, blocksRequested);
-    free(buffer);
-	return blocksRequested;
+    // Write to disk
+    int blocksWritten = fileWrite(dirBuffer, sizeInfo.blockCount, blocksRequested);
+    
+    // Cleanup resources
+    free(dirBuffer);
+    return blocksRequested;
 }
 
 int initFileSystem (uint64_t numberOfBlocks, uint64_t blockSize){
