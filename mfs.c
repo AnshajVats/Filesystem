@@ -526,65 +526,136 @@ int fs_delete(char* filename) {
 // fs_mv
 // This function moves a file or directory from one path to another.
 // ----------------------------------------------------------------
-int fs_mv(const char* startpathname, const char* endpathname) {
-    PPRETDATA *startppinfo = malloc( sizeof(PPRETDATA));
-    startppinfo->parent = malloc( DE_SIZE );
-    int startRes = parsePath(startpathname, startppinfo);
-    int startIndex = startppinfo->lastElementIndex;
-    if( startRes == -1 || startIndex < 2) {
-        free(startppinfo->parent);
-        free(startppinfo);
+/**
+ * Validates path and retrieves directory entry information
+ * @return 0 on success, -1 on failure
+ */
+int validateAndGetPathInfo(const char* pathname, PPRETDATA** ppinfo, int minIndexAllowed) {
+    *ppinfo = malloc(sizeof(PPRETDATA));
+    (*ppinfo)->parent = malloc(DE_SIZE);
+    
+    int res = parsePath(pathname, *ppinfo);
+    int index = (*ppinfo)->lastElementIndex;
+    
+    if (res == -1 || index < minIndexAllowed) {
+        free((*ppinfo)->parent);
+        free(*ppinfo);
         return -1;
     }
-
-    PPRETDATA *endppinfo = malloc( sizeof(PPRETDATA));
-    endppinfo->parent = malloc( DE_SIZE );
-    int endRes = parsePath(endpathname, endppinfo);
-    int endIndex = endppinfo->lastElementIndex;
-    if( endRes == -1 || endIndex == -1 || endppinfo->parent[endIndex].isDirectory == 0) {
-        free(startppinfo->parent);
-        free(startppinfo);
-        free(endppinfo->parent);
-        free(endppinfo);
-        return -1;
-    }
-
-    struct DE* endDir = loadDir(endppinfo->parent, endIndex);
-    int emptyIndex = findInDir(endDir, startppinfo->lastElementName);
-    if( emptyIndex == -1) {
-        emptyIndex = find_vacant_space(endDir, startppinfo->lastElementName);
-    }
-    else if(endDir[emptyIndex].location > 0){
-        returnFreeBlocks(endDir[emptyIndex].location);
-    }
-    if(emptyIndex == -1) {
-        free(startppinfo->parent);
-        free(startppinfo);
-        free(endppinfo->parent);
-        free(endppinfo);
-        free(endDir);
-        return -1;
-    }
-
-    struct DE* parentDir = startppinfo->parent;
-    struct DE sourceDir = parentDir[startIndex];
-    endDir[emptyIndex] = sourceDir;
-    if( sourceDir.isDirectory == 1 ) {
-        struct DE* tempDir = loadDir(parentDir, startIndex);
-        tempDir[1] = endDir[0];
-        strncpy(tempDir[1].name, "..", DE_NAME_SIZE);
-        fileWrite(tempDir, calculateFormula(DE_SIZE, MINBLOCKSIZE), tempDir->location);
-        free(tempDir);
-    }
-    parentDir[startIndex].location = -2l;
-
-    fileWrite(endDir, calculateFormula(DE_SIZE, MINBLOCKSIZE), endDir->location);
-    fileWrite(parentDir, calculateFormula(DE_SIZE, MINBLOCKSIZE), parentDir->location);
-
-    free(startppinfo->parent);
-    free(startppinfo);
-    free(endppinfo->parent);
-    free(endppinfo);
-    free(endDir);
+    
     return 0;
+}
+
+/**
+ * Finds or creates space for entry in destination directory
+ * @return index of available slot, -1 on failure
+ */
+int findDestinationSlot(DE* destDir, const char* entryName) {
+    int index = findInDir(destDir, (char*)entryName);
+    
+    if (index == -1) {
+        // No existing entry with this name, find vacant space
+        return find_vacant_space(destDir, (char*)entryName);
+    } else if (destDir[index].location > 0) {
+        // Entry exists and is in use, free its blocks
+        if (returnFreeBlocks(destDir[index].location) == -1) {
+            return -1;
+        }
+    }
+    
+    return index;
+}
+
+/**
+ * Updates parent reference in directory being moved
+ * @return 0 on success, -1 on failure
+ */
+int updateDirectoryParentRef(DE* entryToMove, DE* newParentDir) {
+    if (!entryToMove->isDirectory) {
+        return 0; // Nothing to do for non-directories
+    }
+    
+    DE* dirContents = loadDir(entryToMove, 0);
+    if (!dirContents) {
+        return -1;
+    }
+    
+    // Update parent (..) reference
+    dirContents[1] = newParentDir[0];
+    strncpy(dirContents[1].name, "..", DE_NAME_SIZE);
+    
+    int res = fileWrite(dirContents, calculateFormula(DE_SIZE, MINBLOCKSIZE), dirContents->location);
+    free(dirContents);
+    
+    return (res == -1) ? -1 : 0;
+}
+
+/**
+ * Move a file or directory from source to destination path
+ */
+int fs_mv(const char* sourcePath, const char* destPath) {
+    PPRETDATA *sourceInfo = NULL;
+    PPRETDATA *destInfo = NULL;
+    DE *destDir = NULL;
+    int result = 0;
+    
+    // Step 1: Validate source path (don't allow moving system directories)
+    if (validateAndGetPathInfo(sourcePath, &sourceInfo, 2) != 0) {
+        return -1;
+    }
+    
+    // Step 2: Validate destination path (must be an existing directory)
+    if (validateAndGetPathInfo(destPath, &destInfo, -1) != 0) {
+        free(sourceInfo->parent);
+        free(sourceInfo);
+        return -1;
+    }
+    
+    int destIndex = destInfo->lastElementIndex;
+    if (destIndex == -1 || !destInfo->parent[destIndex].isDirectory) {
+        result = -1;
+        goto cleanup;
+    }
+    
+    // Step 3: Load destination directory
+    destDir = loadDir(destInfo->parent, destIndex);
+    if (!destDir) {
+        result = -1;
+        goto cleanup;
+    }
+    
+    // Step 4: Find slot in destination directory
+    int slotIndex = findDestinationSlot(destDir, sourceInfo->lastElementName);
+    if (slotIndex == -1) {
+        result = -1;
+        goto cleanup;
+    }
+    
+    // Step 5: Copy the entry to destination
+    int sourceIndex = sourceInfo->lastElementIndex;
+    destDir[slotIndex] = sourceInfo->parent[sourceIndex];
+    
+    // Step 6: Update parent reference if moving a directory
+    if (updateDirectoryParentRef(&destDir[slotIndex], destDir) != 0) {
+        result = -1;
+        goto cleanup;
+    }
+    
+    // Step 7: Mark source entry as unused
+    sourceInfo->parent[sourceIndex].location = -2;
+    
+    // Step 8: Write changes to disk
+    if (fileWrite(destDir, calculateFormula(DE_SIZE, MINBLOCKSIZE), destDir->location) == -1 ||
+        fileWrite(sourceInfo->parent, calculateFormula(DE_SIZE, MINBLOCKSIZE), sourceInfo->parent->location) == -1) {
+        result = -1;
+    }
+    
+cleanup:
+    free(sourceInfo->parent);
+    free(sourceInfo);
+    free(destInfo->parent);
+    free(destInfo);
+    if (destDir) free(destDir);
+    
+    return result;
 }
