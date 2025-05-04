@@ -30,6 +30,9 @@
 
 
 #define SIGNATURE 0x40453005
+#define FS_BLOCK_END_OF_CHAIN 0xFFFFFFFF
+
+
 VCB * vcb;
 int * freeSpaceMap;
 DE * root;
@@ -95,19 +98,24 @@ int allocateblock(uint64_t numberOfBlocks) {
  * @return the number of blocks that were returned. -1 on error
  */
 int returnFreeBlocks(int location){
-    if( location < 1 || location > vcb->totalBlocks ) {
-        fprintf(stderr, "invalid location\n");
+    if(location < 1 || location > vcb->totalBlocks) {
+        fprintf(stderr, "Invalid location\n");
         return -1;
     }
+    
     int currBlockLoc = location;
-    int i = 0;
-    while( freeSpaceMap[currBlockLoc] != 0xFFFFFFFF ) {
+    int blocksReturned = 0;
+    
+    // Count blocks in chain
+    while(freeSpaceMap[currBlockLoc] != FS_BLOCK_END_OF_CHAIN) {
         currBlockLoc = freeSpaceMap[currBlockLoc];
-        i++;
+        blocksReturned++;
     }
+    
+    // Link returned chain to front of free list
     freeSpaceMap[currBlockLoc] = vcb->firstBlock;
     vcb->firstBlock = location;
-    return i;
+    return blocksReturned;
 }
 /*
  * write blocks to disk

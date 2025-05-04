@@ -21,27 +21,15 @@
 #include <fcntl.h>
 #include "b_io.h"
 #include <path.h>
+#include "fsInit.h"
+#include "mfs.h"
 #define PATH_NO_VALUE_LEFT -2
 
 
 #define MAXFCBS 20
 #define B_CHUNK_SIZE 512
 
-typedef struct b_fcb
-	{
-	/** TODO add al the information you need in the file control block **/
-	char * buf;		//holds the open file buffer
-	int index;		//holds the current position in the buffer
-	int buflen;		//holds how many valid bytes are in the buffer
-	int flags;
-	parsepathInfo *pathInfo;
-	DirectoryEntry * fileEntry;
-	
 
-
-	} b_fcb;
-	
-b_fcb fcbArray[MAXFCBS];
 
 int startup = 0;	//Indicates that this has not been initialized
 
