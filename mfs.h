@@ -89,10 +89,12 @@ struct fs_diriteminfo
 // which directory entry you are currently processing so that everytime the caller
 // calls the function readdir, you give the next entry in the directory
 typedef struct {
-	unsigned short  d_reclen;		/* length of this record */
-	unsigned short	dirEntryPosition;
-    int currentEntry;           // Current position for readdir
+    int d_reclen;
+    int dirEntryPosition;
+    long directoryStartLocation;
+    DE* dir;
 } fdDir;
+
 
 
 // Key directory functions
