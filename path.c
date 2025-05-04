@@ -140,16 +140,27 @@ int parsePath(const char* pathName, PPRETDATA* ppinfo) {
     return 0;
 }
 
-int find_vacant_space (DE * directory , char * fileName){
-	for (int i = 0 ; i < (directory->size)/sizeof(struct DE) ; i++ ) {
-		if ( strcmp(fileName, (directory +i)->name) == 0) {
-			fprintf(stderr, "Duplicate found");
-			return -1;
-		}
-		if ( (directory + i)->location == -2 ){
-			return i;
-		}
-	}
-	fprintf(stderr, "Directory is full");
-	return -1;
+int find_vacant_space(DE * directory, char * fileName){
+    int firstVacant = -1;
+    
+    for (int i = 0; i < (directory->size)/sizeof(struct DE); i++) {
+        // Keep track of the first vacant slot we find
+        if (firstVacant == -1 && (directory + i)->location == -2) {
+            firstVacant = i;
+        }
+        
+        // Only check for duplicates in non-vacant entries
+        if ((directory + i)->location != -2 && 
+            strcmp(fileName, (directory + i)->name) == 0) {
+            fprintf(stderr, "Duplicate found");
+            return -1;
+        }
+    }
+    
+    if (firstVacant == -1) {
+        fprintf(stderr, "Directory is full");
+        return -1;
+    }
+    
+    return firstVacant;
 }

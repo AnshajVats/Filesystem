@@ -24,5 +24,6 @@ extern int *fat;
 int createDirectory(int numberOfEntries, struct DE *parent); // struct DE not DE cause it is imported in mfs.h so doesn't know DE
 int fileRead(void* buff, int numberOfBlocks, int location);
 int fileWrite(void* buff, int numberOfBlocks, int location);
+int returnFreeBlocks(int location);
 
 #endif
