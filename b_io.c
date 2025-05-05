@@ -1,9 +1,9 @@
 /**************************************************************
-* Class::  CSC-415-0# Spring 2024
-* Name::
-* Student IDs::
-* GitHub-Name::
-* Group-Name::
+* Class::  CSC-415-02 Spring 2025
+* Name:: Karina Alvarado Mendoza, Anshaj Vats
+* Student IDs:: 921299233, 923760991
+* GitHub-Name:: Karina-Krystal
+* Group-Name:: Horse
 * Project:: Basic File System
 *
 * File:: b_io.c
