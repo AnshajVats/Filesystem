@@ -65,7 +65,7 @@ struct DE* getStartingDirectory(const char* pathName) {
     return (pathName[0] == '/') ? loadDir(root, 0) : loadDir(cwd, 0);
 }
 
-int handleRootCase(const char* pathName, DE* currDir, PPRETDATA* ppinfo) {
+int handleRootCase(const char* pathName, DE* currDir, PathParseResult* ppinfo) {
     if (pathName[0] == '/') {
         memcpy(ppinfo->parent, currDir, DE_SIZE);
         ppinfo->lastElementIndex = -2;
@@ -91,14 +91,14 @@ int processDirectoryComponent(DE** currDir, char* token) {
     return 1;
 }
 
-void processLastComponent(DE* currDir, char* token, PPRETDATA* ppinfo) {
+void processLastComponent(DE* currDir, char* token, PathParseResult* ppinfo) {
     int index = findInDir(currDir, token);
     memcpy(ppinfo->parent, currDir, DE_SIZE);
     ppinfo->lastElementIndex = index;
     ppinfo->lastElementName = strdup(token); // Remember to free this later
 }
 
-int parsePath(const char* pathName, PPRETDATA* ppinfo) {
+int parsePath(const char* pathName, PathParseResult* ppinfo) {
     if (!pathName || !ppinfo) {
         fprintf(stderr, "Invalid pointers\n");
         return -1;
@@ -189,8 +189,8 @@ b_io_fd initializeFCB() {
 }
 
 // Parses the file path and retrieves directory information
-PPRETDATA* parseFilePath(char *filename, DE **fileInfo) {
-    PPRETDATA *ppinfo = malloc(sizeof(PPRETDATA));
+PathParseResult* parseFilePath(char *filename, DE **fileInfo) {
+    PathParseResult *ppinfo = malloc(sizeof(PathParseResult));
     if (!ppinfo) return NULL;
     ppinfo->parent = malloc(DE_SIZE);
     *fileInfo = malloc(MINBLOCKSIZE);
@@ -211,7 +211,7 @@ PPRETDATA* parseFilePath(char *filename, DE **fileInfo) {
 }
 
 // Handles opening a file for reading
-int handleReadMode(b_io_fd fd, PPRETDATA *ppinfo) {
+int handleReadMode(b_io_fd fd, PathParseResult *ppinfo) {
     b_fcb *fcb = &fcbArray[fd];
     DE *file = &ppinfo->parent[ppinfo->lastElementIndex];
     memcpy(fcb->fileInfo, file, sizeof(DE));
@@ -223,7 +223,7 @@ int handleReadMode(b_io_fd fd, PPRETDATA *ppinfo) {
 }
 
 // Handles opening a file for writing (existing file)
-int handleWriteMode(b_io_fd fd, PPRETDATA *ppinfo, int flags) {
+int handleWriteMode(b_io_fd fd, PathParseResult *ppinfo, int flags) {
     b_fcb *fcb = &fcbArray[fd];
     DE *file = &ppinfo->parent[ppinfo->lastElementIndex];
     memcpy(fcb->fileInfo, file, sizeof(DE));
@@ -241,7 +241,7 @@ int handleWriteMode(b_io_fd fd, PPRETDATA *ppinfo, int flags) {
 }
 
 // Handles creating a new file
-int handleCreateMode(b_io_fd fd, PPRETDATA *ppinfo) {
+int handleCreateMode(b_io_fd fd, PathParseResult *ppinfo) {
     b_fcb *fcb = &fcbArray[fd];
     time_t currTime = time(NULL);
     fcb->fileInfo->name[DE_NAME_SIZE - 1] = '\0';
@@ -276,7 +276,7 @@ void updateParentDirectory(b_io_fd fd) {
 }
 
 // Frees allocated resources during error handling
-void cleanupResources(PPRETDATA *ppinfo, DE *fileInfo, b_fcb *fcb) {
+void cleanupResources(PathParseResult *ppinfo, DE *fileInfo, b_fcb *fcb) {
     if (ppinfo) {
         free(ppinfo->parent);
         free(ppinfo);
