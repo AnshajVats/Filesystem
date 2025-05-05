@@ -1,14 +1,18 @@
 /**************************************************************
 * Class::  CSC-415-02 Spring 2025
-* Name:: Wilmaire & Karina Alvarado Mendoza
-* Student IDs::
+* Name:: Wilmaire & Karina Alvarado Mendoza, Anshak and Ayesha
+* Student IDs:: 923656653, 923760991
 * GitHub-Name:: Karina-Krystal
 * Group-Name:: Horse
 * Project:: Basic File System
 *
 * File:: path.c
 *
-* Description:: 
+* Description:: This file implements core path-handling logic for the file system.
+*    It includes functionality for breaking down file paths into components,
+*    resolving relative and absolute paths, and navigating the directory structure.
+*    It supports parsing operations used by commands like mkdir, cd, ls, mv, and rm,
+*    enabling them to correctly identify parent directories and final path elements.
 *
 **************************************************************/
 #include <stdio.h>
