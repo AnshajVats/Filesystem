@@ -23,583 +23,653 @@
 #include "path.h"
 #include "fsInit.h"
 
+//Helper code
 
-/* ---------------------- */
-/* Common Helper Functions */
-/* ---------------------- */
-
-// Error-checked memory allocation
-void* safe_malloc(size_t size) {
-    void* ptr = malloc(size);
-    if (!ptr) {
-        perror("malloc failed");
-        exit(EXIT_FAILURE);
+// We added this because repeating malloc checks everywhere is messy.
+// If we run out of memory, it's better to crash loudly than behave weirdly.
+void* safe_malloc(size_t bytes) {
+    void* mem = malloc(bytes);
+    if (!mem) {
+        perror("Memory allocation failed");
+        exit(EXIT_FAILURE);  // I’d rather catch this here than hunt down random bugs later.
     }
-    return ptr;
+    return mem;
 }
 
-// Generic path parsing helper
+// This helper saves us from repeating the same path parsing logic over and over.
+// It gives us both the parent directory and last element (like the new folder name) in one step.
 PPRETDATA* parse_path(const char* path) {
-    PPRETDATA* ppinfo = safe_malloc(sizeof(PPRETDATA));
-    ppinfo->parent = safe_malloc(DE_SIZE);
-    
-    if (parsePath(path, ppinfo) == -1) {
-        free(ppinfo->parent);
-        free(ppinfo);
+    PPRETDATA* info = safe_malloc(sizeof(PPRETDATA));
+    info->parent = safe_malloc(DE_SIZE);
+
+    // If parsing fails, we don’t want to leave behind garbage in memory
+    if (parsePath(path, info) == -1) {
+        free(info->parent);
+        free(info);
         return NULL;
     }
-    return ppinfo;
+    return info;
 }
 
-// Common directory entry operations
-int find_and_validate_slot(DE* parent, const char* name, int require_empty) {
-    int index = find_vacant_space(parent, (char*)name);
-    if (index == -1) {
-        fprintf(stderr, "No available slot in directory\n");
+// We use this because directories don’t have unlimited space.
+// This checks if we can insert a new entry. Also, if we’re overwriting something,
+// we make sure to release its space first (to avoid leaks or dangling data).
+int find_and_validate_slot(DE* dir, const char* name, int mustBeEmpty) {
+    int idx = find_vacant_space(dir, (char*)name);
+    if (idx == -1) {
+        fprintf(stderr, "No space left in directory.\n");
         return -1;
     }
-    
-    if (!require_empty) {
-        DE* existing = &parent[index];
+
+    // Sometimes we’re reusing an old slot — if so, clean up whatever was there
+    if (!mustBeEmpty) {
+        DE* existing = &dir[idx];
         if (existing->location != -2 && returnFreeBlocks(existing->location) == -1) {
             return -1;
         }
     }
-    return index;
+
+    return idx;
 }
 
-// Common directory initialization
-int initialize_directory_entry(DE* entry, const char* name, int is_dir, int location) {
-    memset(entry, 0, sizeof(DE));
-    entry->location = location;
-    entry->isDirectory = is_dir;
+// Instead of manually assigning timestamps and fields every time we create a folder or file,
+// we wrote this. Keeps things consistent and avoids typos (like forgetting null terminators).
+int initialize_directory_entry(DE* entry, const char* name, int isFolder, int startBlock) {
+    memset(entry, 0, sizeof(DE));  // Just to be safe — avoid leftover junk
+    entry->location = startBlock;
+    entry->isDirectory = isFolder;
     strncpy(entry->name, name, DE_NAME_SIZE);
-    
+
     time_t now = time(NULL);
     entry->dateCreated = now;
     entry->dateModified = now;
     entry->dateLastAccessed = now;
+
     return 0;
 }
 
-// Common write-back operation
-int write_parent_directory(DE* parent) {
-    int size = calculateFormula(parent->size, MINBLOCKSIZE);
-    return fileWrite(parent, size, parent->location);
+// We made this because writing a directory to disk happens a lot — after mkdir, rmdir, rename, etc.
+// No point copying this logic into every function. It's just cleaner this way.
+int write_parent_directory(DE* parentDir) {
+    int blocksToWrite = calculateFormula(parentDir->size, MINBLOCKSIZE);
+    return fileWrite(parentDir, blocksToWrite, parentDir->location);
+}
+
+        /* ====== mkdir Function ====== */
+
+// This function is for creating a new directory at the given path.
+// The idea is to walk through the path, figure out where to place the folder,
+// actually make the folder, and then save that change into the parent directory.
+
+int fs_mkdir(const char *targetPath, mode_t mode) {
+    // First thing: break down the path so we know where we’re putting the new folder.
+    PPRETDATA* pathDetails = parse_path(targetPath);
+    if (!pathDetails) return -1;  // If the path is invalid or parsing failed, just quit.
+
+    // Next: find a free slot in the parent directory for this new folder.
+    // If there’s no room (directory is full), we give up.
+    int slotIndex = find_and_validate_slot(pathDetails->parent, pathDetails->lastElementName, 1);
+    if (slotIndex == -1) goto fail_cleanup;
+
+    // Now let’s create space on disk for this new directory’s contents.
+    // This is like reserving space for it in our virtual file system.
+    int newDirBlock = createDirectory(DEFAULTDIRSIZE, pathDetails->parent);
+    if (newDirBlock == -1) goto fail_cleanup;
+
+    // Here we actually build the new directory entry (name, timestamps, block info, etc.)
+    DE newFolderEntry;
+    initialize_directory_entry(&newFolderEntry, pathDetails->lastElementName, 1, newDirBlock);
+
+    // We finally plug the new entry into the parent directory and save the updated directory to disk.
+    pathDetails->parent[slotIndex] = newFolderEntry;
+    int writeResult = write_parent_directory(pathDetails->parent);
+
+    // Clean up dynamically allocated memory before returning.
+    free(pathDetails->parent);
+    free(pathDetails);
+    return writeResult;
+
+fail_cleanup:
+    // If something broke above, clean up whatever we’ve already allocated.
+    if (pathDetails) {
+        free(pathDetails->parent);
+        free(pathDetails);
+    }
+    return -1;
 }
 
 
-//----------------------------------------------------------------
-// fsmkdir
-// This function creates a new directory at the specified path.
-//-------------------------------------------------------------------
-int fs_mkdir(const char *pathname, mode_t mode) {
-    // Path parsing
-    PPRETDATA* ppinfo = parse_path(pathname);
-    if (!ppinfo) return -1;
+/* ====== CWD Management Functions ====== */
 
-    // Slot finding
-    int slot = find_and_validate_slot(ppinfo->parent, ppinfo->lastElementName, 1);
-    if (slot == -1) goto cleanup;
 
-    // Directory creation
-    int dir_location = createDirectory(DEFAULTDIRSIZE, ppinfo->parent);
-    if (dir_location == -1) goto cleanup;
-
-    // Entry initialization
-    DE new_entry;
-    initialize_directory_entry(&new_entry, ppinfo->lastElementName, 1, dir_location);
-    
-    // Update parent
-    ppinfo->parent[slot] = new_entry;
-    int result = write_parent_directory(ppinfo->parent);
-
-cleanup:
-    free(ppinfo->parent);
-    free(ppinfo);
-    return result;
-}
-
-//----------------------------------------------------------------
-// fs_setcwd
-// This function sets the current working directory to the specified path.
-//-------------------------------------------------------------------
+// This function is used to simplify paths like "/folder/./../a" into a clean version like "/a/"
+// It's useful so that our filesystem handles relative and redundant path references correctly.
 char* cleanPath(char* pathname) {
-    char** pathTable = malloc(sizeof(char*)*strlen(pathname)/2);
-    char* savePtr = NULL;
-    char* token = strtok_r(pathname, "/", &savePtr);
-    int size = 0;
-    while( token != NULL ) {
-        pathTable[size] = strdup(token);
-        token = strtok_r(NULL, "/", &savePtr);
-        size++;
+    int maxParts = strlen(pathname) / 2;
+    char** parts = malloc(sizeof(char*) * maxParts);
+    char* token = strtok(pathname, "/");
+    int actualSize = 0;
+
+    // Split the path by '/' and store parts
+    while (token != NULL) {
+        parts[actualSize++] = strdup(token);
+        token = strtok(NULL, "/");
     }
-    int* indices = malloc(sizeof(int) * size);
-    int index = 0;
-    int i = 0;
-    while( i < size ) {
-        char* token = pathTable[i];
-        if( strcmp(token, ".") == 0 );
-        else if( strcmp(token, "..") == 0 && index > 0) {
-            index--;
+
+    // Process tokens: remove '.', handle '..'
+    int* validIndices = malloc(sizeof(int) * actualSize);
+    int cleanedIndex = 0;
+
+    for (int i = 0; i < actualSize; i++) {
+        if (strcmp(parts[i], ".") == 0) {
+            continue;  // '.' means current directory, so skip
+        } else if (strcmp(parts[i], "..") == 0) {
+            if (cleanedIndex > 0) cleanedIndex--;  // '..' means go up one level
+        } else {
+            validIndices[cleanedIndex++] = i;  // Valid directory/file name
         }
-        else if( strcmp(token, "..") == 0 && index == 0  );
-        else {
-            indices[index] = i;
-            index++;
-        }
-        i++;
     }
-    char* res = malloc( strlen(pathname));
-    strcpy(res, "/");
-    for( int i = 0; i < index; i++ ) {
-        strcat(res, pathTable[indices[i]]);
-        strcat(res, "/");
+
+    // Reconstruct path
+    char* cleaned = malloc(strlen(pathname));
+    strcpy(cleaned, "/");
+    for (int i = 0; i < cleanedIndex; i++) {
+        strcat(cleaned, parts[validIndices[i]]);
+        strcat(cleaned, "/");
     }
-    return res;
+
+    for (int i = 0; i < actualSize; i++) free(parts[i]);
+    free(parts);
+    free(validIndices);
+
+    return cleaned;
 }
 
-char * fs_getcwd(char *pathname, size_t size){
+// We call this whenever we want to get the path of the current working directory
+// This is used internally by the shell or user code that wants to see where we are
+char* fs_getcwd(char* pathname, size_t size) {
     strncpy(pathname, cwdPathName, size);
     return cwdPathName;
 }
 
+// This sets the current working directory to the one the user asked for
+// It validates, loads the directory, and then updates global `cwd` and `cwdPathName`
+int fs_setcwd(char* pathname) {
+    // Parse the path and prepare the parent directory
+    PPRETDATA* ppinfo = malloc(sizeof(PPRETDATA));
+    ppinfo->parent = malloc(DE_SIZE);
+    int parseResult = parsePath(pathname, ppinfo);
 
-int fs_setcwd(char *pathname){
-    PPRETDATA *ppinfo = malloc( sizeof(PPRETDATA));
-    ppinfo->parent = malloc( DE_SIZE );
-    int res = parsePath(pathname, ppinfo);
-    if( ppinfo->lastElementIndex == -2 ) {
+    // If the path is root ("/"), just reset everything to the root directory
+    if (ppinfo->lastElementIndex == -2) {
         cwd = loadDir(root, 0);
         strcpy(cwdPathName, "/");
         free(ppinfo->parent);
         free(ppinfo);
         return 0;
     }
-    if( res == -1 || ppinfo->lastElementIndex == -1){
+
+    // If the path is invalid or not found, return an error
+    if (parseResult == -1 || ppinfo->lastElementIndex == -1) {
         free(ppinfo->parent);
         free(ppinfo);
         return -1;
     }
-    struct DE* dir = malloc(512 * 7 );
-    dir = loadDir(ppinfo->parent, ppinfo->lastElementIndex);
-    if( dir->isDirectory != 1 ) {
-        free(dir);
+
+    // Load the directory we're switching into using the last element index
+    DE* targetDir = loadDir(ppinfo->parent, ppinfo->lastElementIndex);
+    if (!targetDir || targetDir->isDirectory != 1) {
+        if (targetDir) free(targetDir);
+        free(ppinfo->parent);
+        free(ppinfo);
         return -1;
     }
-    memcpy(cwd, dir, DE_SIZE);
-    free(dir);
-    if( pathname[0] == '/' ) {
-        cwdPathName = strdup(pathname);
+
+    // If it's valid, save the target directory structure as our current one
+    memcpy(cwd, targetDir, DE_SIZE);
+    free(targetDir);
+
+    // Handle absolute vs relative pathname updating
+    if (pathname[0] == '/') {
+        cwdPathName = strdup(pathname);  // Absolute path
+    } else {
+        strcat(cwdPathName, pathname);  // Relative path, append to existing
     }
-    else {
-        strcat(cwdPathName, pathname);
-    }
+
+    // Clean up the path for consistency (remove ./, ../, etc.)
     cwdPathName = cleanPath(cwdPathName);
-    int size = calculateFormula(cwd->size, MINBLOCKSIZE);
-    fileWrite(cwd, size, cwd->location);
-    return 0;
-}
 
-int calculateFormula(int i, int j){
-    return (i+j-1)/j;
-}
-
-
-char* getLastElement(const char* path) {
-    if (strlen(path) == 1 && path[0] == '/') {
-        return strdup("."); // Return allocated string
-    }
-
-    const char* lastSlash = strrchr(path, '/');
-    if (!lastSlash) return strdup(path); // No slashes found
-
-    // Handle trailing slash
-    if (*(lastSlash + 1) == '\0') {
-        char* p = strdup(path);
-        p[strlen(p)-1] = '\0'; // Remove trailing slash
-        const char* newSlash = strrchr(p, '/');
-        char* result = newSlash ? strdup(newSlash + 1) : strdup(p);
-        free(p);
-        return result;
-    }
-
-    return strdup(lastSlash + 1); // Return allocated substring
-}
-
-
-//----------------------------------------------------------------
-// fs_mdLs
-// This function lists the contents of a directory.
-//-------------------------------------------------------------------
-fdDir * fs_opendir(const char *pathname) {
-    PPRETDATA *ppinfo = malloc(sizeof(PPRETDATA));
-    ppinfo->parent = malloc(DE_SIZE); // TODO: why not malloc in pp?
-    int res = parsePath(pathname, ppinfo);
-
-    if (res == -1) {
-        return NULL;
-    }
-
-    const char* path = pathname;
-    char* lastElementName = getLastElement(path);
-    int index = findInDir(ppinfo->parent, lastElementName);
-
-    if (index == -1) {
-        fprintf(stderr, "fs_opendir: %s not found\n", lastElementName);
-        return NULL;
-    }
-
-    struct DE entry = ppinfo->parent[index];
-    if (!entry.isDirectory) {
-        fprintf(stderr, "%s is not a directory\n", pathname);
-        return NULL;
-    }
-
-    fdDir *fd = malloc(sizeof(fdDir));
-
-    fd->d_reclen = calculateFormula(entry.size, vcb->blockSize);
-    fd->dirEntryPosition = index;
-    fd->dirEntryLocation = entry.location;
-    fd->index = 0;
-
-    // TODO: why tf was this not typedef?? pick one!!11!
-    fd->di = malloc(sizeof(struct fs_diriteminfo));
-    fd->di->d_reclen = calculateFormula(entry.size, vcb->blockSize);
-    fd->di->fileType = entry.isDirectory;
-    strcpy(fd->di->d_name, lastElementName);
+    // Write back changes to disk to ensure everything is saved
+    int blocksToWrite = calculateFormula(cwd->size, MINBLOCKSIZE);
+    fileWrite(cwd, blocksToWrite, cwd->location);
 
     free(ppinfo->parent);
     free(ppinfo);
-    return fd;
+    return 0;
+}
+
+// Utility function that returns the ceiling of i / j
+int calculateFormula(int i, int j) {
+    return (i + j - 1) / j;
+}
+
+// Extracts just the last segment of a path string, like filename or folder name
+char* getLastElement(const char* path) {
+    // Special case: if the path is just '/', return "."
+    if (strlen(path) == 1 && path[0] == '/') return strdup(".");
+
+    const char* lastSlash = strrchr(path, '/');
+    if (!lastSlash) return strdup(path);
+
+    // Handle trailing slash (e.g., "/folder/")
+    if (*(lastSlash + 1) == '\0') {
+        char* trimmed = strdup(path);
+        trimmed[strlen(trimmed) - 1] = '\0';
+        const char* newSlash = strrchr(trimmed, '/');
+        char* result = newSlash ? strdup(newSlash + 1) : strdup(trimmed);
+        free(trimmed);
+        return result;
+    }
+
+    return strdup(lastSlash + 1);
 }
 
 
-//----------------------------------------------------------------
-// fs_readdir
-// This function reads the next entry in a directory.
-//-------------------------------------------------------------------
+/* ====== Directory Listing Functions (fs_opendir, fs_readdir) ====== */
 
-struct fs_diriteminfo *fs_readdir(fdDir *dirp){
-    int num_blocks = calculateFormula(sizeof(DE) * DECOUNT, vcb->blockSize);
-    struct DE* entries = malloc(num_blocks * vcb->blockSize);
-    int res = fileRead(entries, num_blocks, dirp->dirEntryLocation);
-    struct DE entry = entries[dirp->index];
+// We open a directory stream so we can later read its contents (like how `ls` works).
+fdDir* fs_opendir(const char* pathname) {
+    // We start by preparing to parse the path (e.g., "/folder/sub")
+    PPRETDATA* pathInfo = malloc(sizeof(PPRETDATA));
+    pathInfo->parent = malloc(DE_SIZE);
 
-    if (res == -1) {
-        fprintf(stderr, "Could not load entry\n");
-        free(entries);
+    // We break the path into components so we can find the final directory
+    if (parsePath(pathname, pathInfo) == -1) {
+        free(pathInfo->parent);
+        free(pathInfo);
         return NULL;
     }
 
-    // Skip empty entries
-    while (dirp->index < DECOUNT-1 && entry.location == -2l) {
-        entry = entries[++dirp->index];
-    }
+    // We isolate the last element (e.g., "sub" in "/folder/sub")
+    char* entryName = getLastElement(pathname);
+    int entryIndex = findInDir(pathInfo->parent, entryName);
 
-    if (dirp->index == DECOUNT-1) {
-        free(entries);
+    // If the directory doesn't exist in its parent, return an error
+    if (entryIndex == -1) {
+        fprintf(stderr, "fs_opendir: %s not found\n", entryName);
+        free(pathInfo->parent);
+        free(pathInfo);
         return NULL;
     }
 
+    // We now confirm that the located entry is actually a directory
+    DE entry = pathInfo->parent[entryIndex];
+    if (!entry.isDirectory) {
+        fprintf(stderr, "%s is not a directory\n", pathname);
+        free(pathInfo->parent);
+        free(pathInfo);
+        return NULL;
+    }
+
+    // We prepare and populate a directory stream object that we’ll use to iterate
+    fdDir* dirStream = malloc(sizeof(fdDir));
+    dirStream->d_reclen = calculateFormula(entry.size, vcb->blockSize);
+    dirStream->dirEntryPosition = entryIndex;
+    dirStream->dirEntryLocation = entry.location;
+    dirStream->index = 0;
+
+    // We also prepare a buffer for storing information about entries we read
+    dirStream->di = malloc(sizeof(struct fs_diriteminfo));
+    dirStream->di->d_reclen = dirStream->d_reclen;
+    dirStream->di->fileType = entry.isDirectory;
+    strcpy(dirStream->di->d_name, entryName);
+
+    // Clean up what we no longer need after setting things up
+    free(pathInfo->parent);
+    free(pathInfo);
+    return dirStream;
+}
+
+
+// We use this to read the next entry in the open directory stream one-by-one.
+struct fs_diriteminfo* fs_readdir(fdDir* dirp) {
+    // We first calculate how many blocks this directory spans
+    int totalBlocks = calculateFormula(sizeof(DE) * DECOUNT, vcb->blockSize);
+    DE* directoryEntries = malloc(totalBlocks * vcb->blockSize);
+
+    // Load the directory content from disk into memory
+    int readSuccess = fileRead(directoryEntries, totalBlocks, dirp->dirEntryLocation);
+    if (readSuccess == -1) {
+        fprintf(stderr, "Could not load directory entries\n");
+        free(directoryEntries);
+        return NULL;
+    }
+
+    DE currentEntry = directoryEntries[dirp->index];
+
+    // We skip over any unused or deleted entries
+    while (dirp->index < DECOUNT - 1 && currentEntry.location == -2L) {
+        currentEntry = directoryEntries[++dirp->index];
+    }
+
+    // If we reach the end, return NULL to signal no more entries
+    if (dirp->index == DECOUNT - 1) {
+        free(directoryEntries);
+        return NULL;
+    }
+
+    // Copy relevant info into our return buffer so the caller can see it
     dirp->di->d_reclen = dirp->d_reclen;
-    dirp->di->fileType = entry.isDirectory;
-    strcpy(dirp->di->d_name, entry.name);
-    dirp->index++;
+    dirp->di->fileType = currentEntry.isDirectory;
+    strcpy(dirp->di->d_name, currentEntry.name);
+    dirp->index++;  // Prepare for the next call
 
-    free(entries);
+    free(directoryEntries);
     return dirp->di;
 }
 
-//--------------------------------------------------------------
-// fs_stat
-// This function retrieves information about a file or directory.
-//--------------------------------------------------------------
+/* ====== File & Directory Info Functions (fs_stat, fs_closedir) ====== */
 
-int fs_stat(const char *pathname, struct fs_stat *buf) {
-    PPRETDATA *ppinfo = malloc(sizeof(PPRETDATA));
-    ppinfo->parent = malloc(DE_SIZE); // TODO: why not malloc in pp?
-    int res = parsePath(pathname, ppinfo);
+// We use this when we want to fetch metadata about a file or folder like size, timestamps, etc.
+int fs_stat(const char* pathname, struct fs_stat* buf) {
+    // Break path into parent + last element structure
+    PPRETDATA* pathInfo = malloc(sizeof(PPRETDATA));
+    pathInfo->parent = malloc(DE_SIZE);
 
-    if (res == -1) {
+    // Parse path and make sure it exists
+    if (parsePath(pathname, pathInfo) == -1) {
+        free(pathInfo->parent);
+        free(pathInfo);
         return -1;
     }
 
-    char* lastElementName = getLastElement(pathname);
-    int index = findInDir(ppinfo->parent, lastElementName);
+    // Get last component name and its index
+    char* targetName = getLastElement(pathname);
+    int index = findInDir(pathInfo->parent, targetName);
+
     if (index == -1) {
+        free(pathInfo->parent);
+        free(pathInfo);
         return -1;
     }
 
-    struct DE entry = ppinfo->parent[index];
-    buf->st_size = entry.size;
+    // Fill out the stat structure with metadata
+    DE target = pathInfo->parent[index];
+    buf->st_size = target.size;
     buf->st_blksize = vcb->blockSize;
-    buf->st_blocks = calculateFormula(entry.size, vcb->blockSize);
-    buf->st_accesstime = entry.dateLastAccessed;
-    buf->st_modtime = entry.dateModified;
-    buf->st_createtime = entry.dateLastAccessed;
+    buf->st_blocks = calculateFormula(target.size, vcb->blockSize);
+    buf->st_accesstime = target.dateLastAccessed;
+    buf->st_modtime = target.dateModified;
+    buf->st_createtime = target.dateCreated;
 
+    // Clean up
+    free(pathInfo->parent);
+    free(pathInfo);
     return index;
 }
 
 
-//--------------------------------------------------------------
-// fs_closedir
-// This function closes a directory stream.
-//--------------------------------------------------------------
-
-int fs_closedir(fdDir *dirp) {
-
-    if (dirp == NULL) {
-        fprintf(stderr, "Cannot close directory, is null\n");
+// When we’re done reading through a directory, we use this to close it and free memory
+int fs_closedir(fdDir* dirp) {
+    if (!dirp) {
+        fprintf(stderr, "Cannot close directory — pointer is NULL\n");
         return 0;
     }
 
+    // Clean up memory used for the directory stream
     free(dirp);
     return 1;
 }
 
 
-//----------------------------------------------------------------
-// fs_isFile
-// This function checks if a given path is a file.
-//-------------------------------------------------------------------
-//return 1 if directory, 0 otherwise
-int fs_isDir(char * pathname){
-    PPRETDATA *ppinfo = malloc(sizeof(PPRETDATA));
-    ppinfo->parent = malloc(DE_SIZE);
-    int res = parsePath(pathname, ppinfo);
+/* ====== Directory Type & Deletion Functions (fs_isDir, fs_isFile, fs_rmdir, fs_delete) ====== */
 
-    if (res == -1 || ppinfo->lastElementIndex < 0) {
-        free(ppinfo->parent);
-        free(ppinfo);
-        return 0;
+// We use this to check if a given path refers to a directory.
+// It helps us verify whether we can navigate into it or apply operations like rmdir.
+int fs_isDir(char* pathname) {
+    PPRETDATA* pathInfo = malloc(sizeof(PPRETDATA));
+    pathInfo->parent = malloc(DE_SIZE);
+
+    int parsed = parsePath(pathname, pathInfo);
+    if (parsed == -1 || pathInfo->lastElementIndex < 0) {
+        free(pathInfo->parent);
+        free(pathInfo);
+        return 0;  // Not a directory or path doesn't exist
     }
 
-    int returnStatement = ppinfo->parent[ppinfo->lastElementIndex].isDirectory;
-    free(ppinfo->parent);
-    free(ppinfo);
-    return returnStatement;
+    int isDirectory = pathInfo->parent[pathInfo->lastElementIndex].isDirectory;
+    free(pathInfo->parent);
+    free(pathInfo);
+    return isDirectory;
 }
 
-//return 1 if file, 0 otherwise
-int fs_isFile(char * filename){
-	int index = findInDir(cwd, filename);
-    if( index == -1 ) {
-        return -1;
-    }
-	return !cwd[index].isDirectory;
+// We use this to check if the provided name in the current directory is a file.
+// This is helpful to validate file operations like delete or open.
+int fs_isFile(char* filename) {
+    int index = findInDir(cwd, filename);
+    if (index == -1) return -1;  // Not found in current directory
+    return !cwd[index].isDirectory;  // Return true if not a directory
 }
 
-//-----------------------------------------------------------------
-// fs_rmdir
-// This function removes a directory at the specified path.
-//-----------------------------------------------------------------
+
+// We use this to check if a directory is empty (only has "." and ".." entries).
+// It's required before we safely remove a directory.
 int isEmpty(DE* dir) {
     if (!dir) return 0;
-    
-    // Use actual directory size instead of DECOUNT
-    int entry_count = dir[0].size / sizeof(DE);
-    for (int i = 2; i < entry_count; i++) {
-        if (dir[i].location > 0) return 0;
+
+    int entryCount = dir[0].size / sizeof(DE);
+    for (int i = 2; i < entryCount; i++) {
+        if (dir[i].location > 0) return 0;  // Found something other than "." or ".."
     }
     return 1;
 }
 
-int fs_rmdir(const char *pathname) {
-    PPRETDATA *ppinfo = NULL;
-    DE *currDir = NULL;
-    int result = -1;
 
-    if (!(ppinfo = parse_path(pathname))) goto cleanup;
-    if (ppinfo->lastElementIndex < 0) goto cleanup;
-
-    DE* entry = &ppinfo->parent[ppinfo->lastElementIndex];
-    if (!entry->isDirectory) goto cleanup;
-
-    if (!(currDir = loadDir(entry, 0))) goto cleanup;
-    if (!isEmpty(currDir)) {
-        printf("Error: Directory not empty '%s'\n", pathname);
-        goto cleanup;
-    }
-
-    if (returnFreeBlocks(entry->location) == -1) goto cleanup;
-    
-    entry->location = -2;
-    result = write_parent_directory(ppinfo->parent);
-
-cleanup:
-    if (currDir) free(currDir);
-    if (ppinfo) {
-        free(ppinfo->parent);
-        free(ppinfo);
-    }
-    return result;
-}
-
-//----------------------------------------------------------------
-// fs_delete
-// This function deletes a file at the specified path.
-//-------------------------------------------------------------------
-int fs_delete(char* filename) {
-    PPRETDATA* ppinfo = parse_path(filename);
-    if (!ppinfo || ppinfo->lastElementIndex < 0) return -1;
-
-    DE* entry = &ppinfo->parent[ppinfo->lastElementIndex];
-    
-    // Validate file
-    if (entry->isDirectory) {
-        fprintf(stderr, "Cannot delete directory with fs_delete\n");
-        goto cleanup;
-    }
-
-    // Free resources
-    if (entry->size > 0 && returnFreeBlocks(entry->location) == -1) goto cleanup;
-    entry->location = -2;
-
-    // Write changes
-    int result = write_parent_directory(ppinfo->parent);
-
-cleanup:
-    free(ppinfo->parent);
-    free(ppinfo);
-    return result;
-}
-
-// ----------------------------------------------------------------
-// fs_mv
-// This function moves a file or directory from one path to another.
-// ----------------------------------------------------------------
-/**
- * Validates path and retrieves directory entry information
- * @return 0 on success, -1 on failure
- */
-int validateAndGetPathInfo(const char* pathname, PPRETDATA** ppinfo, int minIndexAllowed) {
-    *ppinfo = malloc(sizeof(PPRETDATA));
-    (*ppinfo)->parent = malloc(DE_SIZE);
-    
-    int res = parsePath(pathname, *ppinfo);
-    int index = (*ppinfo)->lastElementIndex;
-    
-    if (res == -1 || index < minIndexAllowed) {
-        free((*ppinfo)->parent);
-        free(*ppinfo);
+// We use this to remove a directory from the file system.
+// This only succeeds if the directory is valid and completely empty.
+int fs_rmdir(const char* pathname) {
+    // Parse the path so we can locate the directory and its parent
+    PPRETDATA* pathInfo = parse_path(pathname);
+    if (!pathInfo || pathInfo->lastElementIndex < 0) {
+        if (pathInfo) {
+            free(pathInfo->parent);
+            free(pathInfo);
+        }
         return -1;
     }
-    
+
+    // Get the directory entry we’re trying to remove
+    DE* dirEntry = &pathInfo->parent[pathInfo->lastElementIndex];
+
+    // If it’s not a directory, we can’t remove it
+    if (!dirEntry->isDirectory) {
+        free(pathInfo->parent);
+        free(pathInfo);
+        return -1;
+    }
+
+    // Load the contents of the directory
+    DE* dirContents = loadDir(dirEntry, 0);
+    if (!dirContents || !isEmpty(dirContents)) {
+        // Can’t delete if not empty
+        if (dirContents) free(dirContents);
+        free(pathInfo->parent);
+        free(pathInfo);
+        return -1;
+    }
+
+    // Free the blocks used by the directory
+    if (returnFreeBlocks(dirEntry->location) == -1) {
+        free(dirContents);
+        free(pathInfo->parent);
+        free(pathInfo);
+        return -1;
+    }
+
+    // Mark the directory entry as deleted
+    dirEntry->location = -2;
+
+    // Save the parent directory changes to disk
+    int result = write_parent_directory(pathInfo->parent);
+
+    // Clean up memory
+    free(dirContents);
+    free(pathInfo->parent);
+    free(pathInfo);
+
+    return result;
+}
+
+
+// We use this to delete a file from the file system.
+// It cleans up the storage blocks and marks the entry as removed.
+int fs_delete(char* filename) {
+    PPRETDATA* pathInfo = parse_path(filename);
+    if (!pathInfo || pathInfo->lastElementIndex < 0) return -1;
+
+    DE* fileEntry = &pathInfo->parent[pathInfo->lastElementIndex];
+
+    // If it's a directory, we don't allow deletion via fs_delete.
+    if (fileEntry->isDirectory) {
+        fprintf(stderr, "Cannot delete directory with fs_delete\n");
+        free(pathInfo->parent);
+        free(pathInfo);
+        return -1;
+    }
+
+    if (fileEntry->size > 0 && returnFreeBlocks(fileEntry->location) == -1) {
+        free(pathInfo->parent);
+        free(pathInfo);
+        return -1;
+    }
+
+    fileEntry->location = -2;  // Mark the file entry as invalid
+    int result = write_parent_directory(pathInfo->parent);
+
+    free(pathInfo->parent);
+    free(pathInfo);
+    return result;
+}
+
+/* ====== File/Directory Move Function (fs_mv) ====== */
+
+// We use this helper to validate a path and load its directory metadata.
+// It simplifies checking both the parse result and last element index.
+int validateAndGetPathInfo(const char* pathname, PPRETDATA** pathInfo, int minIndexAllowed) {
+    *pathInfo = malloc(sizeof(PPRETDATA));
+    (*pathInfo)->parent = malloc(DE_SIZE);
+
+    int parsed = parsePath(pathname, *pathInfo);
+    int index = (*pathInfo)->lastElementIndex;
+
+    if (parsed == -1 || index < minIndexAllowed) {
+        free((*pathInfo)->parent);
+        free(*pathInfo);
+        return -1;
+    }
+
     return 0;
 }
 
-/**
- * Finds or creates space for entry in destination directory
- * @return index of available slot, -1 on failure
- */
+// We use this helper to find an available slot in the destination directory.
+// If an entry already exists with the same name, we clean it up if necessary.
 int findDestinationSlot(DE* destDir, const char* entryName) {
     int index = findInDir(destDir, (char*)entryName);
-    
+
     if (index == -1) {
-        // No existing entry with this name, find vacant space
         return find_vacant_space(destDir, (char*)entryName);
     } else if (destDir[index].location > 0) {
-        // Entry exists and is in use, free its blocks
-        if (returnFreeBlocks(destDir[index].location) == -1) {
-            return -1;
-        }
+        if (returnFreeBlocks(destDir[index].location) == -1) return -1;
     }
-    
+
     return index;
 }
 
-/**
- * Updates parent reference in directory being moved
- * @return 0 on success, -1 on failure
- */
-int updateDirectoryParentRef(DE* entryToMove, DE* newParentDir) {
-    if (!entryToMove->isDirectory) {
-        return 0; // Nothing to do for non-directories
-    }
-    
-    DE* dirContents = loadDir(entryToMove, 0);
-    if (!dirContents) {
-        return -1;
-    }
-    
-    // Update parent (..) reference
-    dirContents[1] = newParentDir[0];
-    strncpy(dirContents[1].name, "..", DE_NAME_SIZE);
-    
-    int res = fileWrite(dirContents, calculateFormula(DE_SIZE, MINBLOCKSIZE), dirContents->location);
-    free(dirContents);
-    
-    return (res == -1) ? -1 : 0;
+// If we move a directory, we need to update its parent reference ("..")
+// so it correctly points to the new parent location.
+int updateDirectoryParentRef(DE* entry, DE* newParent) {
+    if (!entry->isDirectory) return 0;
+
+    DE* content = loadDir(entry, 0);
+    if (!content) return -1;
+
+    content[1] = newParent[0];
+    strncpy(content[1].name, "..", DE_NAME_SIZE);
+
+    int result = fileWrite(content, calculateFormula(DE_SIZE, MINBLOCKSIZE), content->location);
+    free(content);
+
+    return (result == -1) ? -1 : 0;
 }
 
-/**
- * Move a file or directory from source to destination path
- */
+// We use this to move a file or folder from one location to another in the system.
+// It supports moving into an existing folder and updates necessary metadata.
 int fs_mv(const char* sourcePath, const char* destPath) {
-    PPRETDATA *sourceInfo = NULL;
-    PPRETDATA *destInfo = NULL;
-    DE *destDir = NULL;
+    PPRETDATA* srcInfo = NULL;
+    PPRETDATA* dstInfo = NULL;
+    DE* dstDir = NULL;
     int result = 0;
-    
-    // Step 1: Validate source path (don't allow moving system directories)
-    if (validateAndGetPathInfo(sourcePath, &sourceInfo, 2) != 0) {
+
+    // First, we validate the source path
+    if (validateAndGetPathInfo(sourcePath, &srcInfo, 2) != 0) return -1;
+
+    // Then, we validate the destination path
+    if (validateAndGetPathInfo(destPath, &dstInfo, -1) != 0) {
+        free(srcInfo->parent);
+        free(srcInfo);
         return -1;
     }
-    
-    // Step 2: Validate destination path (must be an existing directory)
-    if (validateAndGetPathInfo(destPath, &destInfo, -1) != 0) {
-        free(sourceInfo->parent);
-        free(sourceInfo);
-        return -1;
-    }
-    
-    int destIndex = destInfo->lastElementIndex;
-    if (destIndex == -1 || !destInfo->parent[destIndex].isDirectory) {
+
+    // Destination must be a valid directory
+    int dstIndex = dstInfo->lastElementIndex;
+    if (dstIndex == -1 || !dstInfo->parent[dstIndex].isDirectory) {
         result = -1;
         goto cleanup;
     }
-    
-    // Step 3: Load destination directory
-    destDir = loadDir(destInfo->parent, destIndex);
-    if (!destDir) {
+
+    // Load the contents of the destination directory
+    dstDir = loadDir(dstInfo->parent, dstIndex);
+    if (!dstDir) {
         result = -1;
         goto cleanup;
     }
-    
-    // Step 4: Find slot in destination directory
-    int slotIndex = findDestinationSlot(destDir, sourceInfo->lastElementName);
+
+    // Find a valid slot to place the moved entry
+    int slotIndex = findDestinationSlot(dstDir, srcInfo->lastElementName);
     if (slotIndex == -1) {
         result = -1;
         goto cleanup;
     }
-    
-    // Step 5: Copy the entry to destination
-    int sourceIndex = sourceInfo->lastElementIndex;
-    destDir[slotIndex] = sourceInfo->parent[sourceIndex];
-    
-    // Step 6: Update parent reference if moving a directory
-    if (updateDirectoryParentRef(&destDir[slotIndex], destDir) != 0) {
+
+    // Copy the entry from source to destination directory
+    int srcIndex = srcInfo->lastElementIndex;
+    dstDir[slotIndex] = srcInfo->parent[srcIndex];
+
+    // If it's a directory, we update its internal ".." pointer
+    if (updateDirectoryParentRef(&dstDir[slotIndex], dstDir) != 0) {
         result = -1;
         goto cleanup;
     }
-    
-    // Step 7: Mark source entry as unused
-    sourceInfo->parent[sourceIndex].location = -2;
-    
-    // Step 8: Write changes to disk
-    if (fileWrite(destDir, calculateFormula(DE_SIZE, MINBLOCKSIZE), destDir->location) == -1 ||
-        fileWrite(sourceInfo->parent, calculateFormula(DE_SIZE, MINBLOCKSIZE), sourceInfo->parent->location) == -1) {
+
+    // Mark the old location as unused
+    srcInfo->parent[srcIndex].location = -2;
+
+    // Save the changes to disk
+    if (fileWrite(dstDir, calculateFormula(DE_SIZE, MINBLOCKSIZE), dstDir->location) == -1 ||
+        fileWrite(srcInfo->parent, calculateFormula(DE_SIZE, MINBLOCKSIZE), srcInfo->parent->location) == -1) {
         result = -1;
     }
-    
+
 cleanup:
-    free(sourceInfo->parent);
-    free(sourceInfo);
-    free(destInfo->parent);
-    free(destInfo);
-    if (destDir) free(destDir);
-    
+    if (srcInfo) {
+        free(srcInfo->parent);
+        free(srcInfo);
+    }
+    if (dstInfo) {
+        free(dstInfo->parent);
+        free(dstInfo);
+    }
+    if (dstDir) free(dstDir);
+
     return result;
 }
