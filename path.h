@@ -1,14 +1,18 @@
 /**************************************************************
 * Class::  CSC-415-02 Spring 2025
-* Name::
-* Student IDs::
+* Name:: Ayesha Irum , Anshaj Vats
+* Student IDs:: 923656653, 923760991
 * GitHub-Name:: Karina-Krystal
 * Group-Name:: Horse
 * Project:: Basic File System
 *
 * File:: path.h
 *
-* Description:: 
+* Description:: Header file for path-handling utilities in the file system.
+*    It provides function declarations for parsing file paths,
+*    extracting directory components, resolving relative paths,
+*    and locating entries in the directory structure. These
+*    functions are essential for commands like mkdir, cd, mv, and ls.
 *
 **************************************************************/
 
