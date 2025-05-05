@@ -1,9 +1,9 @@
 /**************************************************************
 * Class::  CSC-415-0# Spring 2024
-* Name::
-* Student IDs::
-* GitHub-Name::
-* Group-Name::
+* Name:: Ayesha & Anshaj
+* Student IDs:: 923656653, 923760991
+* GitHub-Name::Karina-Krystal
+* Group-Name:: Horse
 * Project:: Basic File System
 *
 * File:: fsShell.c
