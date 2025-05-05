@@ -1,14 +1,20 @@
 /**************************************************************
 * Class::  CSC-415-02 Spring 2025
-* Name::
-* Student IDs::
+* Name:: Ayesha & Anshaj
+* Student IDs:: 923656653, 923760991
 * GitHub-Name:: Karina-Krystal
 * Group-Name:: Horse
 * Project:: Basic File System
 *
 * File:: mfs.c
 *
-* Description:: 
+* Description:: This file contains the main implementation of high-level file system commands
+*    such as creating, deleting, moving, and navigating directories and files.
+*    It defines logic for handling user operations like mkdir, ls, cd, rm, mv, and stat.
+*    It interacts with the lower-level disk I/O and directory entry structures, 
+*    coordinating memory allocation, metadata updates, and disk writes to maintain 
+*    a consistent file system state. Most core functionality that users rely on 
+*    from the shell interface is executed through the logic defined in this file.
 *
 **************************************************************/
 
