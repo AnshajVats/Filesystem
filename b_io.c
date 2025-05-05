@@ -61,7 +61,7 @@ b_io_fd b_getFCB ()
 // O_RDONLY, O_WRONLY, or O_RDWR
 b_io_fd b_open(char *filename, int flags) {
     b_io_fd returnFd = -1;
-    PPRETDATA *ppinfo = NULL;
+    PathParseResult *ppinfo = NULL;
     DE *fileInfo = NULL;
     b_fcb *fcb = NULL;
 

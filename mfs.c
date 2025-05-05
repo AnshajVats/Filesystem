@@ -38,8 +38,8 @@ void* safe_malloc(size_t bytes) {
 
 // This helper saves us from repeating the same path parsing logic over and over.
 // It gives us both the parent directory and last element (like the new folder name) in one step.
-PPRETDATA* parse_path(const char* path) {
-    PPRETDATA* info = safe_malloc(sizeof(PPRETDATA));
+PathParseResult* parse_path(const char* path) {
+    PathParseResult* info = safe_malloc(sizeof(PathParseResult));
     info->parent = safe_malloc(DE_SIZE);
 
     // If parsing fails, we don’t want to leave behind garbage in memory
@@ -103,7 +103,7 @@ int write_parent_directory(DE* parentDir) {
 
 int fs_mkdir(const char *targetPath, mode_t mode) {
     // First thing: break down the path so we know where we’re putting the new folder.
-    PPRETDATA* pathDetails = parse_path(targetPath);
+    PathParseResult* pathDetails = parse_path(targetPath);
     if (!pathDetails) return -1;  // If the path is invalid or parsing failed, just quit.
 
     // Next: find a free slot in the parent directory for this new folder.
@@ -196,7 +196,7 @@ char* fs_getcwd(char* pathname, size_t size) {
 // It validates, loads the directory, and then updates global `cwd` and `cwdPathName`
 int fs_setcwd(char* pathname) {
     // Parse the path and prepare the parent directory
-    PPRETDATA* ppinfo = malloc(sizeof(PPRETDATA));
+    PathParseResult* ppinfo = malloc(sizeof(PathParseResult));
     ppinfo->parent = malloc(DE_SIZE);
     int parseResult = parsePath(pathname, ppinfo);
 
@@ -280,7 +280,7 @@ char* getLastElement(const char* path) {
 // We open a directory stream so we can later read its contents (like how `ls` works).
 fdDir* fs_opendir(const char* pathname) {
     // We start by preparing to parse the path (e.g., "/folder/sub")
-    PPRETDATA* pathInfo = malloc(sizeof(PPRETDATA));
+    PathParseResult* pathInfo = malloc(sizeof(PathParseResult));
     pathInfo->parent = malloc(DE_SIZE);
 
     // We break the path into components so we can find the final directory
@@ -373,7 +373,7 @@ struct fs_diriteminfo* fs_readdir(fdDir* dirp) {
 // We use this when we want to fetch metadata about a file or folder like size, timestamps, etc.
 int fs_stat(const char* pathname, struct fs_stat* buf) {
     // Break path into parent + last element structure
-    PPRETDATA* pathInfo = malloc(sizeof(PPRETDATA));
+    PathParseResult* pathInfo = malloc(sizeof(PathParseResult));
     pathInfo->parent = malloc(DE_SIZE);
 
     // Parse path and make sure it exists
@@ -427,7 +427,7 @@ int fs_closedir(fdDir* dirp) {
 // We use this to check if a given path refers to a directory.
 // It helps us verify whether we can navigate into it or apply operations like rmdir.
 int fs_isDir(char* pathname) {
-    PPRETDATA* pathInfo = malloc(sizeof(PPRETDATA));
+    PathParseResult* pathInfo = malloc(sizeof(PathParseResult));
     pathInfo->parent = malloc(DE_SIZE);
 
     int parsed = parsePath(pathname, pathInfo);
@@ -469,7 +469,7 @@ int isEmpty(DE* dir) {
 // This only succeeds if the directory is valid and completely empty.
 int fs_rmdir(const char* pathname) {
     // Parse the path so we can locate the directory and its parent
-    PPRETDATA* pathInfo = parse_path(pathname);
+    PathParseResult* pathInfo = parse_path(pathname);
     if (!pathInfo || pathInfo->lastElementIndex < 0) {
         if (pathInfo) {
             free(pathInfo->parent);
@@ -524,7 +524,7 @@ int fs_rmdir(const char* pathname) {
 // We use this to delete a file from the file system.
 // It cleans up the storage blocks and marks the entry as removed.
 int fs_delete(char* filename) {
-    PPRETDATA* pathInfo = parse_path(filename);
+    PathParseResult* pathInfo = parse_path(filename);
     if (!pathInfo || pathInfo->lastElementIndex < 0) return -1;
 
     DE* fileEntry = &pathInfo->parent[pathInfo->lastElementIndex];
@@ -555,8 +555,8 @@ int fs_delete(char* filename) {
 
 // We use this helper to validate a path and load its directory metadata.
 // It simplifies checking both the parse result and last element index.
-int validateAndGetPathInfo(const char* pathname, PPRETDATA** pathInfo, int minIndexAllowed) {
-    *pathInfo = malloc(sizeof(PPRETDATA));
+int validateAndGetPathInfo(const char* pathname, PathParseResult** pathInfo, int minIndexAllowed) {
+    *pathInfo = malloc(sizeof(PathParseResult));
     (*pathInfo)->parent = malloc(DE_SIZE);
 
     int parsed = parsePath(pathname, *pathInfo);
@@ -605,8 +605,8 @@ int updateDirectoryParentRef(DE* entry, DE* newParent) {
 // We use this to move a file or folder from one location to another in the system.
 // It supports moving into an existing folder and updates necessary metadata.
 int fs_mv(const char* sourcePath, const char* destPath) {
-    PPRETDATA* srcInfo = NULL;
-    PPRETDATA* dstInfo = NULL;
+    PathParseResult* srcInfo = NULL;
+    PathParseResult* dstInfo = NULL;
     DE* dstDir = NULL;
     int result = 0;
 

@@ -76,7 +76,7 @@ struct parsePathData{
     char* lastElementName;
 };
 
-typedef struct parsePathData PPRETDATA;
+typedef struct parsePathData PathParseResult;
 
 // This structure is returned by fs_readdir to provide the caller with information
 // about each file as it iterates through a directory
@@ -139,10 +139,4 @@ struct fs_stat
 
 int fs_stat(const char *path, struct fs_stat *buf);
 
-
-
-
-
-
 #endif
-
