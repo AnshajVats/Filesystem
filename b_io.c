@@ -27,6 +27,9 @@
 #include "fsLow.h"
 
 
+
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
 b_fcb fcbArray[MAXFCBS]; 
 int startup = 0;  
 
@@ -129,19 +132,23 @@ int b_seek (b_io_fd fd, off_t offset, int whence)
 
 
 // Interface to write function	
-int b_write (b_io_fd fd, char * buffer, int count)
-	{
-	if (startup == 0) b_init();  //Initialize our system
-
-	// check that fd is between 0 and (MAXFCBS-1)
-	if ((fd < 0) || (fd >= MAXFCBS))
-		{
-		return (-1); 					//invalid file descriptor
-		}
-		
-		
-	return (0); //Change this
-	}
+int b_write(b_io_fd fd, char *buffer, int count) {
+    if (validate_write(fd, count) != 0) return -1;
+    
+    b_fcb *fcb = &fcbArray[fd];
+    if (ensure_space(fcb, count) == -1) return -1;
+    
+    int written = perform_write(fcb, buffer, count);
+    
+    // Update metadata
+    fcb->fileInfo->size += written;
+    fcb->fileInfo->dateModified = time(NULL);
+    fcb->parent[fcb->fileIndex] = *fcb->fileInfo;
+    int parent_blocks = calculateFormula(fcb->parent->size, MINBLOCKSIZE);
+    fileWrite(fcb->parent, parent_blocks, fcb->parent->location);
+    
+    return written;
+}
 
 
 
@@ -164,20 +171,39 @@ int b_write (b_io_fd fd, char * buffer, int count)
 //  |             |                                                |        |
 //  | Part1       |  Part 2                                        | Part3  |
 //  +-------------+------------------------------------------------+--------+
-int b_read (b_io_fd fd, char * buffer, int count)
-	{
-
-	if (startup == 0) b_init();  //Initialize our system
-
-	// check that fd is between 0 and (MAXFCBS-1)
-	if ((fd < 0) || (fd >= MAXFCBS))
-		{
-		return (-1); 					//invalid file descriptor
-		}
-		
-	return (0);	//Change this
-	}
-	
+int b_read(b_io_fd fd, char *buffer, int count) {
+    b_fcb *fcb;
+    if (validate_read(fd, count, &fcb) != 0) return -1;
+    
+    int part1, part2, part3;
+    calculate_segments(fcb, count, &part1, &part2, &part3);
+    
+    // Read from buffer
+    if (part1 > 0) {
+        memcpy(buffer, fcb->buf + fcb->index, part1);
+        fcb->index += part1;
+    }
+    
+    // Read full blocks
+    if (part2 > 0) {
+        int blocks = part2 / B_CHUNK_SIZE;
+        int read_blocks = fileRead(buffer + part1, blocks, fcb->currentBlock);
+        fcb->currentBlock = fileSeek(fcb->currentBlock, read_blocks);
+        part2 = read_blocks * B_CHUNK_SIZE;
+    }
+    
+    // Read remaining bytes
+    if (part3 > 0) {
+        fcb->currentBlock = fileSeek(fcb->currentBlock, 1);
+        fcb->buflen = fileRead(fcb->buf, 1, fcb->currentBlock) * B_CHUNK_SIZE;
+        fcb->index = MIN(part3, fcb->buflen);
+        memcpy(buffer + part1 + part2, fcb->buf, fcb->index);
+        part3 = fcb->index;
+    }
+    
+    fcb->remainingBytes -= (part1 + part2 + part3);
+    return part1 + part2 + part3;
+}
 // Interface to Close the file	
 int b_close (b_io_fd fd)
 	{

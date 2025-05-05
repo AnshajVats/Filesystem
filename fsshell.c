@@ -38,16 +38,16 @@
 
 /****   SET THESE TO 1 WHEN READY TO TEST THAT COMMAND ****/
 #define CMDLS_ON	1
-#define CMDCP_ON	0
+#define CMDCP_ON	1
 #define CMDMV_ON	1
 #define CMDMD_ON	1
 #define CMDRM_ON	1
-#define CMDCP2L_ON	0
-#define CMDCP2FS_ON	0
+#define CMDCP2L_ON	1
+#define CMDCP2FS_ON	1
 #define CMDCD_ON	1
 #define CMDPWD_ON	1
 #define CMDTOUCH_ON	1
-#define CMDCAT_ON	0
+#define CMDCAT_ON	1
 
 
 typedef struct dispatch_t
@@ -302,7 +302,7 @@ int cmd_cat (int argcnt, char *argvec[])
                 {
                 readcnt = b_read (testfs_src_fd, buf, BUFFERLEN-1);
                 buf[readcnt] = '\0';
-                printf("%s", buf);
+                printf("%s\n", buf);
                 } while (readcnt == BUFFERLEN-1);
         b_close (testfs_src_fd);
 #endif

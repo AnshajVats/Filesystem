@@ -20,11 +20,12 @@ extern struct VCB *vcb;
 extern struct DE *root;
 extern struct DE *cwd;
 extern char * cwdPathName;
-extern int *fat;
+extern int * freeSpaceMap;
 int createDirectory(int numberOfEntries, struct DE *parent); 
 int fileRead(void* buff, int numberOfBlocks, int location);
 int fileWrite(void* buff, int numberOfBlocks, int location);
 int returnFreeBlocks(int location);
 int fileSeek(int location, int numberOfBlocks);
+int allocateblock(uint64_t numberOfBlocks) ;
 
 #endif

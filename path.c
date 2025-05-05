@@ -24,6 +24,7 @@
 #include "b_io.h"
 
 #define B_CHUNK_SIZE 512 // block size in bytes
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
 
 // global pointers
 
@@ -286,4 +287,116 @@ void cleanupResources(PPRETDATA *ppinfo, DE *fileInfo, b_fcb *fcb) {
         free(fcb->buf);
         free(fcb->parent);
     }
+}
+
+int validate_write(b_io_fd fd, int count) {
+    if (startup == 0) b_init();
+    
+    if (fd < 0 || fd >= MAXFCBS) {
+        fprintf(stderr, "Invalid file descriptor: %d\n", fd);
+        return -1;
+    }
+    
+    b_fcb *fcb = &fcbArray[fd];
+    if (!fcb->fileInfo || count < 0 || (fcb->activeFlags & O_RDONLY)) {
+        fprintf(stderr, "Invalid write parameters\n");
+        return -1;
+    }
+    
+    return 0;
+}
+
+int ensure_space(b_fcb *fcb, int required_bytes) {
+    int current_space = fcb->numBlocks * MINBLOCKSIZE;
+    int needed_blocks = (required_bytes - (current_space - fcb->fileInfo->size) 
+                       + MINBLOCKSIZE - 1) / MINBLOCKSIZE;
+    
+    if (needed_blocks > 0) {
+        int new_blocks = allocateblock(needed_blocks);
+        if (new_blocks == -1) return -1;
+
+        if (fcb->fileInfo->location == -1) {
+            fcb->fileInfo->location = new_blocks;
+            fcb->currentBlock = new_blocks;
+        } else {
+            int last_block = fileSeek(fcb->fileInfo->location, fcb->numBlocks - 1);
+            freeSpaceMap[last_block] = new_blocks;
+        }
+        fcb->numBlocks += needed_blocks;
+    }
+    return 0;
+}
+
+int perform_write(b_fcb *fcb, char *data, int length) {
+    int total = 0;
+    
+    int buff_space = B_CHUNK_SIZE - fcb->index;
+    if (buff_space > 0) {
+        int chunk = MIN(buff_space, length);
+        memcpy(fcb->buf + fcb->index, data, chunk);
+        fcb->index += chunk;
+        total += chunk;
+        length -= chunk;
+        data += chunk;
+    }
+
+    if (fcb->index == B_CHUNK_SIZE) {
+        fileWrite(fcb->buf, 1, fcb->currentBlock);
+        fcb->currentBlock = fileSeek(fcb->currentBlock, 1);
+        fcb->index = 0;
+    }
+
+    if (length >= B_CHUNK_SIZE) {
+        int blocks = length / B_CHUNK_SIZE;
+        int written = fileWrite(data, blocks, fcb->currentBlock);
+        fcb->currentBlock = fileSeek(fcb->currentBlock, written);
+        int bytes = written * B_CHUNK_SIZE;
+        total += bytes;
+        length -= bytes;
+        data += bytes;
+    }
+
+    // Store remaining in buffer
+    if (length > 0) {
+        memcpy(fcb->buf, data, length);
+        fcb->index = length;
+        total += length;
+    }
+
+    return total;
+}
+
+int validate_read(b_io_fd fd, int count, b_fcb **fcb_ptr) {
+    if (startup == 0) b_init();
+    
+    if (fd < 0 || fd >= MAXFCBS) {
+        fprintf(stderr, "Invalid file descriptor\n");
+        return -1;
+    }
+    
+    *fcb_ptr = &fcbArray[fd];
+    
+    if ((*fcb_ptr)->fileInfo == NULL || count < 0 || 
+        ((*fcb_ptr)->activeFlags & O_WRONLY)) {
+        fprintf(stderr, "Invalid read parameters\n");
+        return -1;
+    }
+    
+    return 0;
+}
+
+void calculate_segments(b_fcb *fcb, int count, 
+                              int *part1, int *part2, int *part3) {
+    // Initialize buffer if first read
+    if (fcb->remainingBytes == fcb->fileInfo->size) {
+        fcb->index = 0;
+        fcb->buflen = fileRead(fcb->buf, 1, fcb->currentBlock) * B_CHUNK_SIZE;
+    }
+    
+    int bytes_available = fcb->buflen - fcb->index;
+    int readable = (count > fcb->remainingBytes) ? fcb->remainingBytes : count;
+    
+    *part1 = (bytes_available > readable) ? readable : bytes_available;
+    *part2 = (readable - *part1) / B_CHUNK_SIZE * B_CHUNK_SIZE;
+    *part3 = readable - *part1 - *part2;
 }
