@@ -23,7 +23,7 @@
 #include "path.h"
 #include "fsInit.h"
 
-//Helper code 
+//Helper code
 
 // We added this because repeating malloc checks everywhere is messy.
 // If we run out of memory, it's better to crash loudly than behave weirdly.
@@ -468,33 +468,55 @@ int isEmpty(DE* dir) {
 // We use this to remove a directory from the file system.
 // This only succeeds if the directory is valid and completely empty.
 int fs_rmdir(const char* pathname) {
-    PPRETDATA* pathInfo = NULL;
-    DE* dirContent = NULL;
-    int result = -1;
-
-    pathInfo = parse_path(pathname);
-    if (!pathInfo || pathInfo->lastElementIndex < 0) goto cleanup;
-
-    DE* dirEntry = &pathInfo->parent[pathInfo->lastElementIndex];
-    if (!dirEntry->isDirectory) goto cleanup;
-
-    dirContent = loadDir(dirEntry, 0);
-    if (!dirContent || !isEmpty(dirContent)) {
-        printf("Error: Directory not empty '%s'\n", pathname);
-        goto cleanup;
+    // Parse the path so we can locate the directory and its parent
+    PPRETDATA* pathInfo = parse_path(pathname);
+    if (!pathInfo || pathInfo->lastElementIndex < 0) {
+        if (pathInfo) {
+            free(pathInfo->parent);
+            free(pathInfo);
+        }
+        return -1;
     }
 
-    if (returnFreeBlocks(dirEntry->location) == -1) goto cleanup;
-    dirEntry->location = -2;  // Invalidate the entry
+    // Get the directory entry we’re trying to remove
+    DE* dirEntry = &pathInfo->parent[pathInfo->lastElementIndex];
 
-    result = write_parent_directory(pathInfo->parent);
-
-cleanup:
-    if (dirContent) free(dirContent);
-    if (pathInfo) {
+    // If it’s not a directory, we can’t remove it
+    if (!dirEntry->isDirectory) {
         free(pathInfo->parent);
         free(pathInfo);
+        return -1;
     }
+
+    // Load the contents of the directory
+    DE* dirContents = loadDir(dirEntry, 0);
+    if (!dirContents || !isEmpty(dirContents)) {
+        // Can’t delete if not empty
+        if (dirContents) free(dirContents);
+        free(pathInfo->parent);
+        free(pathInfo);
+        return -1;
+    }
+
+    // Free the blocks used by the directory
+    if (returnFreeBlocks(dirEntry->location) == -1) {
+        free(dirContents);
+        free(pathInfo->parent);
+        free(pathInfo);
+        return -1;
+    }
+
+    // Mark the directory entry as deleted
+    dirEntry->location = -2;
+
+    // Save the parent directory changes to disk
+    int result = write_parent_directory(pathInfo->parent);
+
+    // Clean up memory
+    free(dirContents);
+    free(pathInfo->parent);
+    free(pathInfo);
+
     return result;
 }
 
