@@ -42,4 +42,12 @@ void setupCommonFCBFields(b_io_fd fd, DE *parent, int flags);
 void updateParentDirectory(b_io_fd fd);
 void cleanupResources(PPRETDATA *ppinfo, DE *fileInfo, b_fcb *fcb);
 
+int perform_write(b_fcb *fcb, char *data, int length);
+int ensure_space(b_fcb *fcb, int required_bytes);
+int validate_write(b_io_fd fd, int count);
+
+int validate_read(b_io_fd fd, int count, b_fcb **fcb_ptr);
+void calculate_segments(b_fcb *fcb, int count, 
+                              int *part1, int *part2, int *part3);
+
 #endif
