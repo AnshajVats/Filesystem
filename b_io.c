@@ -1,7 +1,7 @@
 /**************************************************************
 * Class::  CSC-415-02 Spring 2025
-* Name:: Karina Alvarado Mendoza, Anshaj Vats
-* Student IDs:: 921299233, 923760991
+* Name:: Karina Alvarado Mendoza, Anshaj Vats, Ayesha Irum
+* Student IDs:: 921299233, 923760991, 923656653
 * GitHub-Name:: Karina-Krystal
 * Group-Name:: Horse
 * Project:: Basic File System
