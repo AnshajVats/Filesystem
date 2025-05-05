@@ -529,141 +529,125 @@ int fs_delete(char* filename) {
     return result;
 }
 
+/* ====== File/Directory Move Function (fs_mv) ====== */
 
-// ----------------------------------------------------------------
-// fs_mv
-// This function moves a file or directory from one path to another.
-// ----------------------------------------------------------------
-/**
- * Validates path and retrieves directory entry information
- * @return 0 on success, -1 on failure
- */
-int validateAndGetPathInfo(const char* pathname, PPRETDATA** ppinfo, int minIndexAllowed) {
-    *ppinfo = malloc(sizeof(PPRETDATA));
-    (*ppinfo)->parent = malloc(DE_SIZE);
-    
-    int res = parsePath(pathname, *ppinfo);
-    int index = (*ppinfo)->lastElementIndex;
-    
-    if (res == -1 || index < minIndexAllowed) {
-        free((*ppinfo)->parent);
-        free(*ppinfo);
+// We use this helper to validate a path and load its directory metadata.
+// It simplifies checking both the parse result and last element index.
+int validateAndGetPathInfo(const char* pathname, PPRETDATA** pathInfo, int minIndexAllowed) {
+    *pathInfo = malloc(sizeof(PPRETDATA));
+    (*pathInfo)->parent = malloc(DE_SIZE);
+
+    int parsed = parsePath(pathname, *pathInfo);
+    int index = (*pathInfo)->lastElementIndex;
+
+    if (parsed == -1 || index < minIndexAllowed) {
+        free((*pathInfo)->parent);
+        free(*pathInfo);
         return -1;
     }
-    
+
     return 0;
 }
 
-/**
- * Finds or creates space for entry in destination directory
- * @return index of available slot, -1 on failure
- */
+// We use this helper to find an available slot in the destination directory.
+// If an entry already exists with the same name, we clean it up if necessary.
 int findDestinationSlot(DE* destDir, const char* entryName) {
     int index = findInDir(destDir, (char*)entryName);
-    
+
     if (index == -1) {
-        // No existing entry with this name, find vacant space
         return find_vacant_space(destDir, (char*)entryName);
     } else if (destDir[index].location > 0) {
-        // Entry exists and is in use, free its blocks
-        if (returnFreeBlocks(destDir[index].location) == -1) {
-            return -1;
-        }
+        if (returnFreeBlocks(destDir[index].location) == -1) return -1;
     }
-    
+
     return index;
 }
 
-/**
- * Updates parent reference in directory being moved
- * @return 0 on success, -1 on failure
- */
-int updateDirectoryParentRef(DE* entryToMove, DE* newParentDir) {
-    if (!entryToMove->isDirectory) {
-        return 0; // Nothing to do for non-directories
-    }
-    
-    DE* dirContents = loadDir(entryToMove, 0);
-    if (!dirContents) {
-        return -1;
-    }
-    
-    // Update parent (..) reference
-    dirContents[1] = newParentDir[0];
-    strncpy(dirContents[1].name, "..", DE_NAME_SIZE);
-    
-    int res = fileWrite(dirContents, calculateFormula(DE_SIZE, MINBLOCKSIZE), dirContents->location);
-    free(dirContents);
-    
-    return (res == -1) ? -1 : 0;
+// If we move a directory, we need to update its parent reference ("..")
+// so it correctly points to the new parent location.
+int updateDirectoryParentRef(DE* entry, DE* newParent) {
+    if (!entry->isDirectory) return 0;
+
+    DE* content = loadDir(entry, 0);
+    if (!content) return -1;
+
+    content[1] = newParent[0];
+    strncpy(content[1].name, "..", DE_NAME_SIZE);
+
+    int result = fileWrite(content, calculateFormula(DE_SIZE, MINBLOCKSIZE), content->location);
+    free(content);
+
+    return (result == -1) ? -1 : 0;
 }
 
-/**
- * Move a file or directory from source to destination path
- */
+// We use this to move a file or folder from one location to another in the system.
+// It supports moving into an existing folder and updates necessary metadata.
 int fs_mv(const char* sourcePath, const char* destPath) {
-    PPRETDATA *sourceInfo = NULL;
-    PPRETDATA *destInfo = NULL;
-    DE *destDir = NULL;
+    PPRETDATA* srcInfo = NULL;
+    PPRETDATA* dstInfo = NULL;
+    DE* dstDir = NULL;
     int result = 0;
-    
-    // Step 1: Validate source path (don't allow moving system directories)
-    if (validateAndGetPathInfo(sourcePath, &sourceInfo, 2) != 0) {
+
+    // First, we validate the source path
+    if (validateAndGetPathInfo(sourcePath, &srcInfo, 2) != 0) return -1;
+
+    // Then, we validate the destination path
+    if (validateAndGetPathInfo(destPath, &dstInfo, -1) != 0) {
+        free(srcInfo->parent);
+        free(srcInfo);
         return -1;
     }
-    
-    // Step 2: Validate destination path (must be an existing directory)
-    if (validateAndGetPathInfo(destPath, &destInfo, -1) != 0) {
-        free(sourceInfo->parent);
-        free(sourceInfo);
-        return -1;
-    }
-    
-    int destIndex = destInfo->lastElementIndex;
-    if (destIndex == -1 || !destInfo->parent[destIndex].isDirectory) {
+
+    // Destination must be a valid directory
+    int dstIndex = dstInfo->lastElementIndex;
+    if (dstIndex == -1 || !dstInfo->parent[dstIndex].isDirectory) {
         result = -1;
         goto cleanup;
     }
-    
-    // Step 3: Load destination directory
-    destDir = loadDir(destInfo->parent, destIndex);
-    if (!destDir) {
+
+    // Load the contents of the destination directory
+    dstDir = loadDir(dstInfo->parent, dstIndex);
+    if (!dstDir) {
         result = -1;
         goto cleanup;
     }
-    
-    // Step 4: Find slot in destination directory
-    int slotIndex = findDestinationSlot(destDir, sourceInfo->lastElementName);
+
+    // Find a valid slot to place the moved entry
+    int slotIndex = findDestinationSlot(dstDir, srcInfo->lastElementName);
     if (slotIndex == -1) {
         result = -1;
         goto cleanup;
     }
-    
-    // Step 5: Copy the entry to destination
-    int sourceIndex = sourceInfo->lastElementIndex;
-    destDir[slotIndex] = sourceInfo->parent[sourceIndex];
-    
-    // Step 6: Update parent reference if moving a directory
-    if (updateDirectoryParentRef(&destDir[slotIndex], destDir) != 0) {
+
+    // Copy the entry from source to destination directory
+    int srcIndex = srcInfo->lastElementIndex;
+    dstDir[slotIndex] = srcInfo->parent[srcIndex];
+
+    // If it's a directory, we update its internal ".." pointer
+    if (updateDirectoryParentRef(&dstDir[slotIndex], dstDir) != 0) {
         result = -1;
         goto cleanup;
     }
-    
-    // Step 7: Mark source entry as unused
-    sourceInfo->parent[sourceIndex].location = -2;
-    
-    // Step 8: Write changes to disk
-    if (fileWrite(destDir, calculateFormula(DE_SIZE, MINBLOCKSIZE), destDir->location) == -1 ||
-        fileWrite(sourceInfo->parent, calculateFormula(DE_SIZE, MINBLOCKSIZE), sourceInfo->parent->location) == -1) {
+
+    // Mark the old location as unused
+    srcInfo->parent[srcIndex].location = -2;
+
+    // Save the changes to disk
+    if (fileWrite(dstDir, calculateFormula(DE_SIZE, MINBLOCKSIZE), dstDir->location) == -1 ||
+        fileWrite(srcInfo->parent, calculateFormula(DE_SIZE, MINBLOCKSIZE), srcInfo->parent->location) == -1) {
         result = -1;
     }
-    
+
 cleanup:
-    free(sourceInfo->parent);
-    free(sourceInfo);
-    free(destInfo->parent);
-    free(destInfo);
-    if (destDir) free(destDir);
-    
+    if (srcInfo) {
+        free(srcInfo->parent);
+        free(srcInfo);
+    }
+    if (dstInfo) {
+        free(dstInfo->parent);
+        free(dstInfo);
+    }
+    if (dstDir) free(dstDir);
+
     return result;
 }
