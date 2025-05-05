@@ -205,7 +205,19 @@ int b_read(b_io_fd fd, char *buffer, int count) {
     return part1 + part2 + part3;
 }
 // Interface to Close the file	
-int b_close (b_io_fd fd)
-	{
+int b_close (b_io_fd fd){
+    // Validate the file descriptor
+    if (fd < 0 || fd >= MAXFCBS) return -1;
 
-	}
+    b_fcb *fcb = &fcbArray[fd];
+
+    // Free allocated resources
+    free(fcb->fileInfo);
+    free(fcb->parent);
+    free(fcb->buf);
+
+    // Reset to initial state
+    memset(fcb, 0, sizeof(b_fcb));
+
+    return 0;
+}
