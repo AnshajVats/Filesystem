@@ -1,5 +1,5 @@
 /**************************************************************
-* Class::  CSC-415-02 Spring 2024
+* Class::  CSC-415-02 Spring 2025
 * Name::
 * Student IDs::
 * GitHub-Name:: Karina-Krystal
@@ -80,6 +80,7 @@ int initialize_directory_entry(DE* entry, const char* name, int isFolder, int st
     entry->isDirectory = isFolder;
     strncpy(entry->name, name, DE_NAME_SIZE);
 
+    // setting timestamps for directory variables
     time_t now = time(NULL);
     entry->dateCreated = now;
     entry->dateModified = now;
@@ -593,8 +594,8 @@ int updateDirectoryParentRef(DE* entry, DE* newParent) {
     DE* content = loadDir(entry, 0);
     if (!content) return -1;
 
-    content[1] = newParent[0];
-    strncpy(content[1].name, "..", DE_NAME_SIZE);
+    content[1] = newParent[0];  // copy parent's DE
+    strncpy(content[1].name, "..", DE_NAME_SIZE); // rename to ".."
 
     int result = fileWrite(content, calculateFormula(DE_SIZE, MINBLOCKSIZE), content->location);
     free(content);

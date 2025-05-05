@@ -1,9 +1,9 @@
 /**************************************************************
-* Class::  CSC-415-0# Spring 2024
+* Class::  CSC-415-05 Spring 2025
 * Name::
 * Student IDs::
-* GitHub-Name::
-* Group-Name::
+* GitHub-Name:: Karina-Krystal
+* Group-Name:: Horse
 * Project:: Basic File System
 *
 * File:: mfs.h

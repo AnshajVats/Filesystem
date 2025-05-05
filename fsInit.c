@@ -1,9 +1,9 @@
 /**************************************************************
-* Class::  CSC-415-02 Spring 2024
+* Class::  CSC-415-02 Spring 2025
 * Name::
 * Student IDs::
-* GitHub-Name::
-* Group-Name::
+* GitHub-Name:: Karina-Krystal
+* Group-Name:: Horse
 * Project:: Basic File System
 *
 * File:: fsInit.c
@@ -69,10 +69,10 @@ int initFreespace(uint64_t numberOfBlocks, uint64_t blockSize){
  */
 int allocateblock(uint64_t numberOfBlocks) {
     if( numberOfBlocks < 1 ) {
-        return -1;
+        return -1; // invalid number of blocks requested
     }
     if( numberOfBlocks > vcb->totalFreeSpace ) {
-        return -1;
+        return -1; // not enough free space
     }
 
     // first free block in the freeSpaceMap table
@@ -87,6 +87,7 @@ int allocateblock(uint64_t numberOfBlocks) {
         vcb->totalFreeSpace--;
     }
     freeSpaceMap[currBlockLoc] = 0xFFFFFFFF;
+    // updating free block to next
     vcb->firstBlock = nextBlockLoc;
     return head;
 }

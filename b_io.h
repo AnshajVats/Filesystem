@@ -1,9 +1,9 @@
 /**************************************************************
-* Class::  CSC-415-0# Spring 2024
+* Class::  CSC-415-02 Spring 2025
 * Name::
 * Student IDs::
-* GitHub-Name::
-* Group-Name::
+* GitHub-Name:: Karina-Krystal
+* Group-Name:: Horse
 * Project:: Basic File System
 *
 * File:: b_io.h
@@ -25,13 +25,13 @@ typedef int b_io_fd;
 
 typedef struct b_fcb
 	{
-	DE * fileInfo;	//holfd information relevant to file operations
-	DE * parent;	//holfd information relevant to file operations
+	DE * fileInfo;		//holds information relevant to file operations
+	DE * parent;		//holds information relevant to file operations
 
-	char * buf;		//holds the open file buffer
-	int index;		//holds the current position in the buffer
+	char * buf;			//holds the open file buffer
+	int index;			//holds the current position in the buffer
     int remainingBytes; // the number of bytes that are left in the buffer
-	int buflen;		//holds how many valid bytes are in the buffer
+	int buflen;			//holds how many valid bytes are in the buffer
 	int currentBlock;	//holds position within file in blocks
 	int numBlocks;		//holds the total number of blocks in file
     int fileIndex;      //holds the index in the parent of the file

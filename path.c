@@ -1,5 +1,5 @@
 /**************************************************************
-* Class::  CSC-415-02 Spring 2024
+* Class::  CSC-415-02 Spring 2025
 * Name:: Wilmaire & Karina Alvarado Mendoza
 * Student IDs::
 * GitHub-Name:: Karina-Krystal
@@ -32,6 +32,8 @@
 // helper function
 // checking if given directory entry is a directory
 
+// finds directory for entry with specified name
+// returns index of its matching
 int findInDir(DE* searchDirectory, char* name){
     int res = -1;
     for( int i = 0; i < DECOUNT; i++) {
@@ -42,7 +44,7 @@ int findInDir(DE* searchDirectory, char* name){
     return res;
 }
 
-
+// loads directory from disk into memory
 DE* loadDir(DE* searchDirectory, int index) {
     int size = calculateFormula(DE_SIZE, MINBLOCKSIZE);
     int loc = searchDirectory[index].location;
@@ -55,16 +57,19 @@ DE* loadDir(DE* searchDirectory, int index) {
     return directories;
 }
 
+// frees memory used directory
 void freeDirectory(DE *dir) {
     if (dir != cwd && dir != root) {
         free(dir);
     }
 }
 
+// determines staring directory
 struct DE* getStartingDirectory(const char* pathName) {
     return (pathName[0] == '/') ? loadDir(root, 0) : loadDir(cwd, 0);
 }
 
+// handles special case when path refers to root
 int handleRootCase(const char* pathName, DE* currDir, PathParseResult* ppinfo) {
     if (pathName[0] == '/') {
         memcpy(ppinfo->parent, currDir, DE_SIZE);
@@ -86,11 +91,12 @@ int processDirectoryComponent(DE** currDir, char* token) {
     DE* newDir = loadDir(*currDir, index);
     if (!newDir) return 0;
     
-    freeDirectory(*currDir);
-    *currDir = newDir;
+    freeDirectory(*currDir);    // frees old directory if needed
+    *currDir = newDir;          // updates current directory pointer
     return 1;
 }
 
+// saves info about last elemnt
 void processLastComponent(DE* currDir, char* token, PathParseResult* ppinfo) {
     int index = findInDir(currDir, token);
     memcpy(ppinfo->parent, currDir, DE_SIZE);
@@ -98,15 +104,18 @@ void processLastComponent(DE* currDir, char* token, PathParseResult* ppinfo) {
     ppinfo->lastElementName = strdup(token); // Remember to free this later
 }
 
+// parses given path
 int parsePath(const char* pathName, PathParseResult* ppinfo) {
     if (!pathName || !ppinfo) {
         fprintf(stderr, "Invalid pointers\n");
         return -1;
     }
 
+    // determines starting directory (root or cwd)
     DE* currDir = getStartingDirectory(pathName);
     if (!currDir) return -1;
 
+    // modifiablle copy of path
     char* pathCopy = strdup(pathName);
     if (!pathCopy) {
         freeDirectory(currDir);
@@ -121,6 +130,7 @@ int parsePath(const char* pathName, PathParseResult* ppinfo) {
         return result;
     }
 
+    // processing each component
     while (1) {
         char *nextToken = strtok_r(NULL, "/", &savePtr);
         
@@ -289,6 +299,7 @@ void cleanupResources(PathParseResult *ppinfo, DE *fileInfo, b_fcb *fcb) {
     }
 }
 
+// validates whether write operation is allowed
 int validate_write(b_io_fd fd, int count) {
     if (startup == 0) b_init();
     
@@ -306,6 +317,7 @@ int validate_write(b_io_fd fd, int count) {
     return 0;
 }
 
+// making sure there is enough space allocated
 int ensure_space(b_fcb *fcb, int required_bytes) {
     int current_space = fcb->numBlocks * MINBLOCKSIZE;
     int needed_blocks = (required_bytes - (current_space - fcb->fileInfo->size) 
@@ -327,6 +339,7 @@ int ensure_space(b_fcb *fcb, int required_bytes) {
     return 0;
 }
 
+// writes data to file 
 int perform_write(b_fcb *fcb, char *data, int length) {
     int total = 0;
     
