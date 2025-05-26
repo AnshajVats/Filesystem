@@ -3,12 +3,6 @@
 **Course:** CSC415 Operating Systems  
 **Semester:** Spring 2025  
 **Project:** Basic File System  
-**Team Name:** Horse  
-**Team Members:**  
-- Karina Alvarado Mendoza (921299233)  
-- Wilmaire Mejia (922846038)  
-- Anshaj Vats (923760991)  
-- Ayesha Irum (923656653)  
 
 ---
 
